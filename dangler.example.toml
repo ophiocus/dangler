@@ -1,0 +1,18 @@
+# dangler fleet config — one entry per downstream MCP server.
+# Copy to dangler.toml (or point DANGLER_CONFIG at it) and edit.
+
+[servers.mongodb]
+command = "npx"
+args = ["-y", "mongodb-mcp-server@latest", "--readOnly"]
+
+[servers.everything]
+# The MCP reference test server — handy for smoke-testing dangler itself.
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-everything"]
+
+# [servers.drive-overdrive]
+# command = "node"
+# args = ["D:/Projects/google-drive-overdrive/dist/index.js"]
+# cwd = "D:/Projects/google-drive-overdrive"
+# [servers.drive-overdrive.env]
+# MCP_TRANSPORT = "stdio"
