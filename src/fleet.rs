@@ -1,3 +1,12 @@
+//! The downstream side of dangler: lazily spawned MCP child processes with a
+//! persistent schema cache and idle reaping.
+//!
+//! Lifecycle of a child: cold → [`Fleet::acquire`] spawns it and marks it
+//! in-use → [`Fleet::release`] stamps `last_used` → the background
+//! [`Fleet::reap_loop`] cancels it once idle past its timeout (or
+//! [`Fleet::drop_server`] does so on demand). Cached schemas outlive the
+//! process, so `search_tools` answers even for cold servers.
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -17,7 +26,9 @@ pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 600;
 const REAP_SCAN_INTERVAL: Duration = Duration::from_secs(30);
 const CANCEL_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// A warm downstream server and the bookkeeping the reaper needs.
 struct Child {
+    /// The live rmcp client session; owns the child process via its transport.
     service: RunningService<RoleClient, ()>,
     /// Updated on acquire and release; the idle clock reaping measures against.
     last_used: Instant,
@@ -34,12 +45,16 @@ pub struct Fleet {
     cache: Mutex<HashMap<String, Vec<Tool>>>,
 }
 
+/// One row of `list_servers`: a configured server and what we know about it.
 pub struct ServerStatus {
     pub name: String,
+    /// Whether a child process is currently running for this server.
     pub warm: bool,
+    /// Cached tool count, if the server has ever been loaded (`None` = never indexed).
     pub cached_tools: Option<usize>,
 }
 
+/// One `search_tools` match: a tool on some downstream server.
 pub struct ToolHit {
     pub server: String,
     pub tool: String,
@@ -103,7 +118,8 @@ impl Fleet {
         }
     }
 
-    pub fn spec(&self, name: &str) -> Result<&ServerSpec> {
+    /// Look up a server's launch spec, erroring on names not in the config.
+    fn spec(&self, name: &str) -> Result<&ServerSpec> {
         self.config
             .servers
             .get(name)
@@ -123,6 +139,7 @@ impl Fleet {
         (secs > 0).then(|| Duration::from_secs(secs))
     }
 
+    /// Status of every configured server, warm or cold.
     pub async fn statuses(&self) -> Vec<ServerStatus> {
         let children = self.children.lock().await;
         let cache = self.cache.lock().await;
@@ -174,6 +191,7 @@ impl Fleet {
         Ok(peer)
     }
 
+    /// Mark a request finished: decrement `inflight` and restart the idle clock.
     async fn release(&self, name: &str) {
         if let Some(child) = self.children.lock().await.get_mut(name) {
             child.inflight = child.inflight.saturating_sub(1);
@@ -198,6 +216,7 @@ impl Fleet {
         Ok(tools)
     }
 
+    /// Proxy one tool call to a downstream server (spawning it if cold).
     pub async fn call(
         &self,
         server: &str,
@@ -246,29 +265,21 @@ impl Fleet {
     /// One reap pass: remove and cancel every idle child. Returns reaped names.
     pub async fn reap_idle(&self) -> Vec<String> {
         let now = Instant::now();
-        let mut victims = Vec::new();
-        {
-            let mut children = self.children.lock().await;
-            let names: Vec<String> = children
-                .iter()
-                .filter(|(name, c)| {
-                    should_reap(
-                        c.inflight,
-                        now.duration_since(c.last_used),
-                        self.idle_timeout(name),
-                    )
-                })
-                .map(|(name, _)| name.clone())
-                .collect();
-            for name in names {
-                if let Some(c) = children.remove(&name) {
-                    victims.push((name, c.service));
-                }
-            }
-        }
+        let victims: Vec<(String, Child)> = self
+            .children
+            .lock()
+            .await
+            .extract_if(|name, child| {
+                should_reap(
+                    child.inflight,
+                    now.duration_since(child.last_used),
+                    self.idle_timeout(name),
+                )
+            })
+            .collect();
         let mut reaped = Vec::new();
-        for (name, service) in victims {
-            Self::cancel_service(service, &name).await;
+        for (name, child) in victims {
+            Self::cancel_service(child.service, &name).await;
             tracing::info!(server = %name, "reaped idle downstream server");
             reaped.push(name);
         }

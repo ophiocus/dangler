@@ -1,31 +1,45 @@
+//! Fleet configuration: `dangler.toml` describes every downstream MCP server
+//! dangler can front. Unknown keys are rejected so typos surface at startup
+//! instead of silently deserializing to defaults.
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+/// Top-level `dangler.toml` shape.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     /// Reap a warm child after this many seconds unused (default 600; 0 = never).
-    /// Per-server `idle_timeout_secs` overrides this.
+    /// Per-server [`ServerSpec::idle_timeout_secs`] overrides this.
     pub idle_timeout_secs: Option<u64>,
+    /// The downstream fleet, keyed by the server name used in every meta-tool.
     #[serde(default)]
     pub servers: BTreeMap<String, ServerSpec>,
 }
 
+/// How to launch one downstream MCP server (stdio child process).
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ServerSpec {
+    /// Executable to spawn (e.g. `npx`, `wsl`, an absolute binary path).
     pub command: String,
+    /// Arguments passed to `command`.
     #[serde(default)]
     pub args: Vec<String>,
+    /// Extra environment for the child. Remember `WSLENV` when bridging into WSL.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// Working directory for the child; inherits dangler's when unset.
     pub cwd: Option<PathBuf>,
     /// Per-server idle reap override (seconds; 0 = never reap this server).
     pub idle_timeout_secs: Option<u64>,
 }
 
 impl Config {
+    /// Read and parse a config file, with the file path in any error.
     pub fn load(path: &Path) -> Result<Self> {
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("reading config {}", path.display()))?;
@@ -34,7 +48,7 @@ impl Config {
         Ok(cfg)
     }
 
-    /// DANGLER_CONFIG env var, else ./dangler.toml
+    /// `DANGLER_CONFIG` env var, else `./dangler.toml`.
     pub fn default_path() -> PathBuf {
         std::env::var_os("DANGLER_CONFIG")
             .map(PathBuf::from)
@@ -80,5 +94,21 @@ mod tests {
     fn empty_config_is_valid() {
         let cfg: Config = toml::from_str("").unwrap();
         assert!(cfg.servers.is_empty());
+    }
+
+    #[test]
+    fn unknown_keys_are_rejected() {
+        // Catches config typos (e.g. `idle_timeout_sec`) at startup.
+        assert!(toml::from_str::<Config>("idle_timeout_sec = 60").is_err());
+        assert!(
+            toml::from_str::<Config>(
+                r#"
+                [servers.x]
+                command = "npx"
+                arg = ["typo"]
+                "#
+            )
+            .is_err()
+        );
     }
 }
