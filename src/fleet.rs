@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
+use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, CallToolResult, JsonObject, Tool};
 use rmcp::service::{Peer, RoleClient, RunningService};
 use rmcp::transport::TokioChildProcess;
-use rmcp::ServiceExt;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
@@ -118,10 +118,10 @@ impl Fleet {
         }
         let transport = TokioChildProcess::new(cmd)
             .with_context(|| format!("spawning '{name}' ({})", spec.command))?;
-        let running = ()
-            .serve(transport)
-            .await
-            .with_context(|| format!("MCP handshake with '{name}'"))?;
+        let running =
+            ().serve(transport)
+                .await
+                .with_context(|| format!("MCP handshake with '{name}'"))?;
         let peer = running.peer().clone();
         children.insert(name.to_string(), running);
         tracing::info!(server = name, "spawned downstream server");
@@ -223,5 +223,98 @@ impl Fleet {
             .filter(|n| !cache.contains_key(*n))
             .cloned()
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rmcp::model::Tool;
+    use std::sync::{Arc, Mutex as StdMutex, OnceLock};
+
+    // cache_path() reads process-global env — serialize the tests that touch it.
+    fn env_lock() -> &'static StdMutex<()> {
+        static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| StdMutex::new(()))
+    }
+
+    fn tool(name: &str, desc: &str) -> Tool {
+        Tool::new(
+            name.to_string(),
+            desc.to_string(),
+            Arc::new(
+                serde_json::json!({"type": "object", "properties": {}})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+    }
+
+    fn test_config(names: &[&str]) -> Config {
+        let servers = names
+            .iter()
+            .map(|n| {
+                (
+                    n.to_string(),
+                    crate::config::ServerSpec {
+                        command: "unused".into(),
+                        args: vec![],
+                        env: Default::default(),
+                        cwd: None,
+                    },
+                )
+            })
+            .collect();
+        Config { servers }
+    }
+
+    #[tokio::test]
+    async fn search_matches_name_and_description_and_reports_unindexed() {
+        let _guard = env_lock().lock().unwrap();
+        let dir = std::env::temp_dir().join("dangler-test-search");
+        unsafe { std::env::set_var("DANGLER_CACHE", dir.join("none.json")) };
+
+        let fleet = Fleet::new(test_config(&["indexed", "cold"]));
+        fleet.cache.lock().await.insert(
+            "indexed".into(),
+            vec![
+                tool("gd_list_records", "List DNS records for a domain"),
+                tool("echo", "Echoes back the input string"),
+            ],
+        );
+
+        let hits = fleet.search("DNS").await;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].tool, "gd_list_records");
+        assert_eq!(hits[0].server, "indexed");
+        assert_eq!(fleet.search("echo").await.len(), 1);
+        assert!(fleet.search("nonexistent-term").await.is_empty());
+        assert_eq!(fleet.unindexed().await, vec!["cold".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn cache_persists_and_reloads() {
+        let _guard = env_lock().lock().unwrap();
+        let path = std::env::temp_dir()
+            .join("dangler-test-cache")
+            .join("cache.json");
+        std::fs::remove_file(&path).ok();
+        unsafe { std::env::set_var("DANGLER_CACHE", &path) };
+
+        let fleet = Fleet::new(test_config(&["srv"]));
+        fleet.cache.lock().await.insert(
+            "srv".into(),
+            vec![tool("t1", "first"), tool("t2", "second")],
+        );
+        fleet.persist_cache().await;
+        assert!(path.exists());
+
+        let reloaded = Fleet::new(test_config(&["srv"]));
+        let cache = reloaded.cache.lock().await;
+        assert_eq!(cache["srv"].len(), 2);
+        assert_eq!(cache["srv"][0].name, "t1");
+        drop(cache);
+        assert!(reloaded.unindexed().await.is_empty());
     }
 }

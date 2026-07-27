@@ -1,18 +1,30 @@
 # dangler fleet config — one entry per downstream MCP server.
 # Copy to dangler.toml (or point DANGLER_CONFIG at it) and edit.
-
-[servers.mongodb]
-command = "npx"
-args = ["-y", "mongodb-mcp-server@latest", "--readOnly"]
+# NOTE: dangler.toml often ends up carrying credentials (connection strings,
+# tokens in env vars) — keep it out of version control.
 
 [servers.everything]
 # The MCP reference test server — handy for smoke-testing dangler itself.
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-everything"]
 
-# [servers.drive-overdrive]
-# command = "node"
-# args = ["D:/Projects/google-drive-overdrive/dist/index.js"]
-# cwd = "D:/Projects/google-drive-overdrive"
-# [servers.drive-overdrive.env]
-# MCP_TRANSPORT = "stdio"
+[servers.mongodb]
+command = "npx"
+args = ["-y", "mongodb-mcp-server@latest", "--readOnly"]
+[servers.mongodb.env]
+MDB_MCP_CONNECTION_STRING = "mongodb+srv://user:pass@cluster.example.mongodb.net/db"
+
+# Windows-without-Node variant: launch a server inside WSL. Env vars only cross
+# the wsl.exe boundary if named in WSLENV.
+# [servers.mongodb-via-wsl]
+# command = "wsl"
+# args = ["-d", "Ubuntu-24.04", "--", "bash", "-lc", "npx -y mongodb-mcp-server@latest --readOnly"]
+# [servers.mongodb-via-wsl.env]
+# MDB_MCP_CONNECTION_STRING = "mongodb+srv://user:pass@cluster.example.mongodb.net/db"
+# WSLENV = "MDB_MCP_CONNECTION_STRING"
+
+# Any local MCP server binary works the same way:
+# [servers.my-local-server]
+# command = "C:/path/to/my-mcp-server.exe"
+# args = ["--flag"]
+# cwd = "C:/path/to"

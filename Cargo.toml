@@ -2,6 +2,12 @@
 name = "dangler"
 version = "0.1.0"
 edition = "2024"
+description = "MCP pre-loader: one server that fronts a lazy fleet of MCP servers, dangling their tools in front of the model without paying for them up front"
+license = "MIT"
+repository = "https://github.com/ophiocus/dangler"
+readme = "README.md"
+keywords = ["mcp", "model-context-protocol", "gateway", "proxy"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0.104"

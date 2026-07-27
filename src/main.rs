@@ -30,7 +30,11 @@ async fn main() -> Result<()> {
     // `dangler warm` — pre-loader mode: harvest every server's schemas into the
     // persistent cache, then exit. No MCP client involved.
     if std::env::args().nth(1).as_deref() == Some("warm") {
-        eprintln!("warming {} server(s) from {}", cfg.servers.len(), path.display());
+        eprintln!(
+            "warming {} server(s) from {}",
+            cfg.servers.len(),
+            path.display()
+        );
         let fleet = Fleet::new(cfg);
         let mut failures = 0;
         for (name, res) in fleet.warm_all().await {

@@ -72,7 +72,19 @@ dangler warm        # spawn each configured server once, harvest schemas, reap
 dangler             # serve MCP over stdio (search works cold, from the cache)
 ```
 
-## Stack
+## Current limits (honest ones)
+
+- **Stdio upstream only** — register it in Claude Code/Desktop or any stdio MCP client;
+  no Streamable HTTP endpoint yet, so it can't be a claude.ai custom connector.
+- **Stdio downstream only** — it fronts local child-process servers; hosted/HTTP MCP
+  servers (OAuth connectors) can't be proxied yet.
+- **No idle reaping** — a spawned child stays warm until `drop_server` or dangler exits.
+- Schema search is cached-substring, not semantic; run `dangler warm` after changing the
+  fleet so search sees everything.
+
+All four are roadmap items in [docs/architecture.md](docs/architecture.md).
+
+## Stack & license
 
 Rust · [`rmcp`](https://crates.io/crates/rmcp) (official MCP SDK — server *and* client,
-since dangler is both at once) · tokio. Personal project (`ophiocus`).
+since dangler is both at once) · tokio. MIT licensed.
