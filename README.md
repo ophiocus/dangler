@@ -28,7 +28,9 @@ Register **one** server — dangler. It exposes a tiny meta-surface and proxies 
 
 The model discovers capability through `search_tools`/`load_server` (paying schema cost
 only for what it needs), then drives real work through `call_tool`. Downstream servers are
-spawned on first touch and reaped when dropped.
+spawned on first touch and reaped when dropped — or **automatically after sitting idle**
+(`idle_timeout_secs`, default 600, per-server overridable, `0` = keep warm forever; a child
+with a request in flight is never reaped, and its cached schemas stay searchable).
 
 ## Config
 
@@ -57,11 +59,12 @@ DANGLER_CONFIG=path.toml dangler
 
 Register in Claude Code: `claude mcp add dangler -- path/to/dangler.exe`.
 
-## Status (2026-07-22)
+## Status (2026-07-27)
 
-**v0.1 working end-to-end.** Stdio upstream · child-process stdio downstream (incl. the
+**v0.2 working end-to-end.** Stdio upstream · child-process stdio downstream (incl. the
 `wsl.exe` bridge for Node servers on a Node-less Windows host) · **persistent schema
-cache** at `~/.dangler/cache.json` · `dangler warm` pre-loader subcommand. Proven against
+cache** at `~/.dangler/cache.json` · `dangler warm` pre-loader subcommand · **idle
+reaping** (proven live: warm child auto-dropped after its idle window, schemas intact). Proven against
 the real fleet: load → search → call → drop round-trips, and cold-start `search_tools`
 answers across all warmed servers without spawning anything. Registered user-scope in
 Claude Code. See [docs/architecture.md](docs/architecture.md) for the design, the
@@ -78,11 +81,10 @@ dangler             # serve MCP over stdio (search works cold, from the cache)
   no Streamable HTTP endpoint yet, so it can't be a claude.ai custom connector.
 - **Stdio downstream only** — it fronts local child-process servers; hosted/HTTP MCP
   servers (OAuth connectors) can't be proxied yet.
-- **No idle reaping** — a spawned child stays warm until `drop_server` or dangler exits.
 - Schema search is cached-substring, not semantic; run `dangler warm` after changing the
   fleet so search sees everything.
 
-All four are roadmap items in [docs/architecture.md](docs/architecture.md).
+All three are roadmap items in [docs/architecture.md](docs/architecture.md).
 
 ## Stack & license
 

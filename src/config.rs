@@ -6,6 +6,9 @@ use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
+    /// Reap a warm child after this many seconds unused (default 600; 0 = never).
+    /// Per-server `idle_timeout_secs` overrides this.
+    pub idle_timeout_secs: Option<u64>,
     #[serde(default)]
     pub servers: BTreeMap<String, ServerSpec>,
 }
@@ -18,6 +21,8 @@ pub struct ServerSpec {
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     pub cwd: Option<PathBuf>,
+    /// Per-server idle reap override (seconds; 0 = never reap this server).
+    pub idle_timeout_secs: Option<u64>,
 }
 
 impl Config {
@@ -54,10 +59,14 @@ mod tests {
 
             [servers.beta]
             command = "beta.exe"
+            idle_timeout_secs = 0
             "#,
         )
         .unwrap();
         assert_eq!(cfg.servers.len(), 2);
+        assert_eq!(cfg.servers["beta"].idle_timeout_secs, Some(0));
+        assert_eq!(cfg.servers["alpha"].idle_timeout_secs, None);
+        assert_eq!(cfg.idle_timeout_secs, None);
         let alpha = &cfg.servers["alpha"];
         assert_eq!(alpha.command, "npx");
         assert_eq!(alpha.args, vec!["-y", "some-mcp-server"]);

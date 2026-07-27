@@ -3,10 +3,16 @@
 # NOTE: dangler.toml often ends up carrying credentials (connection strings,
 # tokens in env vars) — keep it out of version control.
 
+# Idle reaping: a warm child unused for this many seconds is stopped
+# automatically (its cached schemas stay searchable). Default 600; 0 = never.
+# Per-server `idle_timeout_secs` overrides the global value.
+idle_timeout_secs = 600
+
 [servers.everything]
 # The MCP reference test server — handy for smoke-testing dangler itself.
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-everything"]
+# idle_timeout_secs = 0    # example: keep this one warm forever
 
 [servers.mongodb]
 command = "npx"

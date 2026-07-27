@@ -50,12 +50,22 @@ drained, `drop_server` completes in ~300ms and the child exits gracefully — ev
 2. The bounded cancel in `fleet::drop_server` (3s timeout → `kill_on_drop`) stays as
    defense-in-depth against children that genuinely ignore stdin close.
 
+## Idle reaping (shipped 2026-07-27)
+
+Every warm child carries `{last_used, inflight}`. `acquire`/`release` bracket each
+downstream request (spawn counts as acquire); a background task scans every 30s and
+cancels children where `inflight == 0 && idle >= timeout`. Timeout resolution:
+per-server `idle_timeout_secs` → global `idle_timeout_secs` → 600s default; `0` disables
+reaping at either level. The in-flight guard means a slow downstream call can never be
+reaped mid-request, no matter how stale `last_used` looks. Reaped ≠ forgotten: cached
+schemas stay, so `search_tools` still answers and the next `call_tool` respawns.
+Verified live: 30s-timeout child auto-reaped ~58s after spawn (timeout + scan phase),
+status warm → cold, schemas intact.
+
 ## Roadmap (v0 → useful)
 
-- [ ] **Persistent schema cache** (`~/.dangler/cache.json`): `search_tools` works across
-      the whole fleet from a cold start. `dangler warm` CLI subcommand to pre-harvest all
-      schemas offline — the *pre-loader* proper.
-- [ ] **Idle reaping** — drop children after N minutes unused (config per server).
+- [x] **Persistent schema cache** (`~/.dangler/cache.json`) + `dangler warm` (2026-07-22).
+- [x] **Idle reaping** — per-server/global `idle_timeout_secs`, in-flight guard (2026-07-27).
 - [ ] **Streamable HTTP upstream** (`transport-streamable-http-server` feature) so
       claude.ai custom connectors can use dangler too.
 - [ ] **HTTP downstream** (`transport-streamable-http-client`) for remote MCP servers.
@@ -63,4 +73,5 @@ drained, `drop_server` completes in ~300ms and the child exits gracefully — ev
       real upstream tools (`<server>__<tool>`) via `tools/list_changed` notifications, so
       clients that support dynamic tool lists skip the `call_tool` indirection.
 - [ ] Auth passthrough for downstream servers needing OAuth (hard; see rmcp `auth` feature).
-- [ ] Tests: config parsing, fleet lifecycle against a toy MCP server, schema search.
+- [x] Tests: config parsing, cache persistence, schema search, reap decision logic
+      (fleet lifecycle against a toy MCP server still pending).

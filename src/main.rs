@@ -57,6 +57,10 @@ async fn main() -> Result<()> {
     );
 
     let fleet = Arc::new(Fleet::new(cfg));
+    tokio::spawn({
+        let fleet = fleet.clone();
+        async move { fleet.reap_loop().await }
+    });
     let service = Dangler::new(fleet).serve(rmcp::transport::stdio()).await?;
     service.waiting().await?;
     Ok(())
