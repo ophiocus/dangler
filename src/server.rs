@@ -90,8 +90,9 @@ impl Dangler {
         vec![
             Tool::new(
                 TOOL_LIST_SERVERS,
-                "List the configured downstream MCP servers: name, warm/cold status, and \
-                 cached tool count (if the server has been loaded before).",
+                "List the configured downstream MCP servers: name, warm/cold status, cached \
+                 tool count, the account identity each server acts as, and setup hints for \
+                 unprovisioned servers.",
                 schema(json!({"type": "object", "properties": {}})),
             ),
             Tool::new(
@@ -184,6 +185,8 @@ impl ServerHandler for Dangler {
                             "name": s.name,
                             "status": if s.warm { "warm" } else { "cold" },
                             "cached_tools": s.cached_tools,
+                            "identity": s.identity,
+                            "setup_hint": s.setup_hint,
                         })
                     })
                     .collect();
@@ -196,7 +199,7 @@ impl ServerHandler for Dangler {
                     .search(&args.query)
                     .await
                     .iter()
-                    .map(|h| json!({"server": h.server, "tool": h.tool, "description": h.description}))
+                    .map(|h| json!({"server": h.server, "tool": h.tool, "description": h.description, "identity": h.identity}))
                     .collect();
                 Ok(text_result(json!({
                     "hits": hits,
@@ -208,6 +211,7 @@ impl ServerHandler for Dangler {
                 let tools = self.fleet.load(&args.name).await.map_err(internal_error)?;
                 Ok(text_result(json!({
                     "server": args.name,
+                    "identity": self.fleet.identity_of(&args.name),
                     "tools": tools,
                 })))
             }

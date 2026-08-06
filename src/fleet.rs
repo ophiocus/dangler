@@ -52,6 +52,10 @@ pub struct ServerStatus {
     pub warm: bool,
     /// Cached tool count, if the server has ever been loaded (`None` = never indexed).
     pub cached_tools: Option<usize>,
+    /// The account/identity this server acts as, from config.
+    pub identity: Option<String>,
+    /// Provisioning instructions, from config.
+    pub setup_hint: Option<String>,
 }
 
 /// One `search_tools` match: a tool on some downstream server.
@@ -59,6 +63,8 @@ pub struct ToolHit {
     pub server: String,
     pub tool: String,
     pub description: String,
+    /// The account/identity the owning server acts as.
+    pub identity: Option<String>,
 }
 
 /// DANGLER_CACHE env var, else ~/.dangler/cache.json — schemas survive restarts so
@@ -139,17 +145,27 @@ impl Fleet {
         (secs > 0).then(|| Duration::from_secs(secs))
     }
 
+    /// The configured account/identity label for a server, if any.
+    pub fn identity_of(&self, name: &str) -> Option<String> {
+        self.config
+            .servers
+            .get(name)
+            .and_then(|s| s.identity.clone())
+    }
+
     /// Status of every configured server, warm or cold.
     pub async fn statuses(&self) -> Vec<ServerStatus> {
         let children = self.children.lock().await;
         let cache = self.cache.lock().await;
         self.config
             .servers
-            .keys()
-            .map(|name| ServerStatus {
+            .iter()
+            .map(|(name, spec)| ServerStatus {
                 name: name.clone(),
                 warm: children.contains_key(name),
                 cached_tools: cache.get(name).map(|t| t.len()),
+                identity: spec.identity.clone(),
+                setup_hint: spec.setup_hint.clone(),
             })
             .collect()
     }
@@ -164,6 +180,12 @@ impl Fleet {
             child.last_used = Instant::now();
             return Ok(child.service.peer().clone());
         }
+        // Unprovisioned servers should explain themselves at the failure site.
+        let hint = spec
+            .setup_hint
+            .as_deref()
+            .map(|h| format!(" — setup: {h}"))
+            .unwrap_or_default();
         let mut cmd = Command::new(&spec.command);
         cmd.args(&spec.args);
         for (k, v) in &spec.env {
@@ -173,11 +195,11 @@ impl Fleet {
             cmd.current_dir(cwd);
         }
         let transport = TokioChildProcess::new(cmd)
-            .with_context(|| format!("spawning '{name}' ({})", spec.command))?;
-        let service =
-            ().serve(transport)
-                .await
-                .with_context(|| format!("MCP handshake with '{name}'"))?;
+            .with_context(|| format!("spawning '{name}' ({}){hint}", spec.command))?;
+        let service = ()
+            .serve(transport)
+            .await
+            .with_context(|| format!("MCP handshake with '{name}'{hint}"))?;
         let peer = service.peer().clone();
         children.insert(
             name.to_string(),
@@ -315,6 +337,7 @@ impl Fleet {
         let cache = self.cache.lock().await;
         let mut hits = Vec::new();
         for (server, tools) in cache.iter() {
+            let identity = self.identity_of(server);
             for t in tools {
                 let desc = t.description.as_deref().unwrap_or("");
                 if t.name.to_lowercase().contains(&q) || desc.to_lowercase().contains(&q) {
@@ -322,6 +345,7 @@ impl Fleet {
                         server: server.clone(),
                         tool: t.name.to_string(),
                         description: desc.to_string(),
+                        identity: identity.clone(),
                     });
                 }
             }
@@ -373,6 +397,8 @@ mod tests {
             env: Default::default(),
             cwd: None,
             idle_timeout_secs: secs,
+            identity: None,
+            setup_hint: None,
         }
     }
 

@@ -36,6 +36,14 @@ pub struct ServerSpec {
     pub cwd: Option<PathBuf>,
     /// Per-server idle reap override (seconds; 0 = never reap this server).
     pub idle_timeout_secs: Option<u64>,
+    /// Which account/identity this server acts as (e.g. "tecnocratica",
+    /// "personal"). Surfaced in list_servers and search_tools so a caller
+    /// knows which hat a tool wears *before* invoking it.
+    pub identity: Option<String>,
+    /// How to provision this server (e.g. "npm run authorize as the
+    /// Tecnocrática account"). Shown in list_servers and appended to spawn
+    /// failures so an unprovisioned server explains itself.
+    pub setup_hint: Option<String>,
 }
 
 impl Config {
@@ -68,6 +76,8 @@ mod tests {
             command = "npx"
             args = ["-y", "some-mcp-server"]
             cwd = "/tmp"
+            identity = "tecnocratica"
+            setup_hint = "run npm run authorize as the right account"
             [servers.alpha.env]
             FOO = "bar"
 
@@ -85,6 +95,9 @@ mod tests {
         assert_eq!(alpha.command, "npx");
         assert_eq!(alpha.args, vec!["-y", "some-mcp-server"]);
         assert_eq!(alpha.env["FOO"], "bar");
+        assert_eq!(alpha.identity.as_deref(), Some("tecnocratica"));
+        assert!(alpha.setup_hint.as_deref().unwrap().contains("authorize"));
+        assert!(cfg.servers["beta"].identity.is_none());
         assert_eq!(alpha.cwd.as_deref(), Some(std::path::Path::new("/tmp")));
         let beta = &cfg.servers["beta"];
         assert!(beta.args.is_empty() && beta.env.is_empty() && beta.cwd.is_none());

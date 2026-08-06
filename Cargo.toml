@@ -1,6 +1,6 @@
 [package]
 name = "dangler"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "MCP pre-loader: one server that fronts a lazy fleet of MCP servers, dangling their tools in front of the model without paying for them up front"
 license = "MIT"
