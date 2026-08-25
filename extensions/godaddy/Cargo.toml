@@ -1,0 +1,17 @@
+[package]
+name = "dangler-godaddy"
+version = "0.1.0"
+edition = "2024"
+description = "GoDaddy MCP server — first-party dangler fleet extension wrapping the GoDaddy REST APIs (domains, DNS, subscriptions, and a raw escape hatch to the rest)"
+license = "MIT"
+repository = "https://github.com/ophiocus/dangler"
+
+[dependencies]
+anyhow = "1.0.104"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rmcp = { version = "2.2.0", features = ["server", "transport-io"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"

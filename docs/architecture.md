@@ -62,6 +62,25 @@ schemas stay, so `search_tools` still answers and the next `call_tool` respawns.
 Verified live: 30s-timeout child auto-reaped ~58s after spawn (timeout + scan phase),
 status warm → cold, schemas intact.
 
+## Extensions (first-party fleet servers)
+
+`extensions/<name>/` are workspace member crates, each a standalone stdio MCP
+server meant to be listed in `dangler.toml` like any third-party server — no
+coupling to dangler at runtime. House rules for an extension:
+
+- **Manual `ServerHandler`** (dangler's own style) — hand-written JSON schemas,
+  `match`-based dispatch. Static surfaces don't need the `#[tool]` macros.
+- **Lazy credentials** — the server must start and answer `tools/list` with no
+  provisioning, so `dangler warm` can harvest schemas cold; every call that
+  needs credentials fails with the setup hint instead.
+- **stderr-only logging** — stdout is the transport (see the drain-stderr scar).
+- **A read-only switch** where the wrapped service has destructive writes
+  (`GODADDY_READ_ONLY=1` mirrors the mongodb `--readOnly` convention).
+
+First one: `extensions/godaddy` (`dangler-godaddy`) — GoDaddy domains/DNS/
+subscriptions plus a `raw_api` escape hatch covering the long tail of
+endpoints.
+
 ## Roadmap (v0 → useful)
 
 - [x] **Persistent schema cache** (`~/.dangler/cache.json`) + `dangler warm` (2026-07-22).

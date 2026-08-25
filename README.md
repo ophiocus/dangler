@@ -106,6 +106,24 @@ MDB_MCP_CONNECTION_STRING = "mongodb+srv://…"
 WSLENV = "MDB_MCP_CONNECTION_STRING"
 ```
 
+## Extensions — first-party fleet servers
+
+The repo is a Cargo workspace; `extensions/` holds MCP servers built to be
+danglered (same Rust toolchain, same manual-`ServerHandler` style, lazy
+credentials so `dangler warm` can index them unprovisioned):
+
+| Extension | Binary | What it fronts |
+|---|---|---|
+| [`extensions/godaddy`](extensions/godaddy) | `dangler-godaddy` | GoDaddy REST APIs: domain portfolio, DNS record CRUD, subscriptions, availability — plus a `raw_api` escape hatch reaching every other endpoint (certificates, orders, agreements, aftermarket, …) |
+
+```bash
+cargo build --release --workspace   # builds dangler + every extension
+```
+
+Each extension documents its own provisioning in its README; the commented
+`[servers.godaddy]` block in [dangler.example.toml](dangler.example.toml) shows
+the fleet wiring, including `identity` and `setup_hint`.
+
 ## Current limits
 
 - **Stdio upstream only** — register it in Claude Code/Desktop or any stdio MCP client;

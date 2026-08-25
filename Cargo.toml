@@ -9,6 +9,9 @@ readme = "README.md"
 keywords = ["mcp", "model-context-protocol", "gateway", "proxy"]
 categories = ["command-line-utilities"]
 
+[workspace]
+members = ["extensions/godaddy"]
+
 [dependencies]
 anyhow = "1.0.104"
 rmcp = { version = "2.2.0", features = ["server", "client", "macros", "transport-io", "transport-child-process", "schemars"] }

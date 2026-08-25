@@ -34,3 +34,17 @@ MDB_MCP_CONNECTION_STRING = "mongodb+srv://user:pass@cluster.example.mongodb.net
 # command = "C:/path/to/my-mcp-server.exe"
 # args = ["--flag"]
 # cwd = "C:/path/to"
+
+# First-party extension: the GoDaddy server (extensions/godaddy in this repo).
+# Build with `cargo build --release --workspace`, then point at the binary.
+# Credentials stay OUT of this file: point GODADDY_CREDENTIALS_FILE at a file
+# with a PAT=... line (preferred) or KEY=/SECRET= lines (legacy sso-key).
+# See extensions/godaddy/README.md.
+# [servers.godaddy]
+# command = "C:/path/to/dangler/target/release/dangler-godaddy.exe"
+# identity = "personal GoDaddy account"
+# setup_hint = "create a Personal Access Token at developer.godaddy.com and write PAT=... into the file GODADDY_CREDENTIALS_FILE points at"
+# [servers.godaddy.env]
+# GODADDY_CREDENTIALS_FILE = "C:/Users/me/.godaddy/credentials"
+# # GODADDY_ENV = "ote"        # test environment instead of production
+# # GODADDY_READ_ONLY = "1"    # refuse every mutating tool
