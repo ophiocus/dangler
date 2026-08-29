@@ -1,25 +1,100 @@
+# ──────────────────────────────────────────────────────────────────────────
+#  CI — gates only. No build, no MSI, no release artefacts.
+# ──────────────────────────────────────────────────────────────────────────
+#
+#  Why this exists separately from release.yml:
+#
+#  release.yml runs the same three gates inline before the MSI build, but
+#  only on tag-push. That is too late. A lint that fires on CI's toolchain
+#  but not the local one, or a versioned toolchain pin that silently ships
+#  without clippy, fails at the exact moment you are trying to release — and
+#  burns a version number, because the tag is already public.
+#
+#  This workflow runs the gates on PR and push-to-master so drift surfaces
+#  at edit time instead.
+#
+#  ─────────────────────────────────────────────────────────────────────
+#  KEEP IN SYNC WITH release.yml
+#  ─────────────────────────────────────────────────────────────────────
+#
+#  Three things must stay aligned across both files or the gate is
+#  pointless:
+#
+#    1. Toolchain pin. Both use dtolnay/rust-toolchain@<X.Y.Z> at the same
+#       version. Diverge and CI passes on toolchain A while the ship-time
+#       gate runs on B — the exact drift this is here to prevent.
+#    2. Components. Both declare `components: rustfmt, clippy`. A versioned
+#       toolchain tag ships only the bare compiler without them, which
+#       turns every gate below into a silent no-op.
+#    3. Gate command list — the same three commands in both files:
+#         cargo fmt --check
+#         cargo clippy --workspace --release --all-targets -- -D warnings
+#         cargo test --workspace --release
+#       Adding a fourth gate means editing both files.
+#
+#  No reusable-workflow indirection on purpose: it would move the sync
+#  problem from two gate lists to two callers plus a callee, and add runner
+#  spin-up to every release. The duplication is three commands; this
+#  comment is the discipline.
+#
+#  Bump the pin deliberately, in both files, once the new toolchain passes
+#  locally — never by silently inheriting `@stable`.
+# ──────────────────────────────────────────────────────────────────────────
+
 name: CI
 
 on:
-  push:
-    branches: [master]
   pull_request:
     branches: [master]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "assets/**"
+      - ".gitignore"
+  push:
+    branches: [master]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "assets/**"
+      - ".gitignore"
+  workflow_dispatch:
 
-env:
-  CARGO_TERM_COLOR: always
+permissions:
+  contents: read
+
+# Cancel in-flight runs on the same ref when a newer commit arrives.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  gates:
+    # windows-latest matches release.yml. Linux runners would be cheaper and
+    # most application code is portable, but gate-on-Linux / ship-on-Windows
+    # reintroduces the cross-platform drift this is meant to eliminate —
+    # build.rs has a cfg(target_os = "windows") block, and the product of
+    # this skeleton is a Windows desktop binary.
+    runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v5
+
+      # KEEP IN SYNC WITH release.yml: pin + components.
+      - uses: dtolnay/rust-toolchain@1.93.1
+        with:
+          components: rustfmt, clippy
+
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --workspace --locked
-      - run: cargo test --workspace --locked
-      - run: cargo fmt --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # KEEP IN SYNC WITH release.yml: gate command list.
+      - name: cargo fmt --check
+        run: cargo fmt --check
+
+      # --workspace so that when an app grows a second crate, the member's
+      # lints and tests are actually run. A root package plus a workspace
+      # otherwise gates only the binary, silently skipping the member.
+      - name: cargo clippy
+        run: cargo clippy --workspace --release --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --release
