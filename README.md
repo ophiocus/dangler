@@ -108,21 +108,29 @@ WSLENV = "MDB_MCP_CONNECTION_STRING"
 
 ## Extensions — first-party fleet servers
 
-The repo is a Cargo workspace; `extensions/` holds MCP servers built to be
-danglered (same Rust toolchain, same manual-`ServerHandler` style, lazy
-credentials so `dangler warm` can index them unprovisioned):
+`extensions/` holds MCP servers we own, built to be danglered: hand-written tool
+schemas, stderr-only logging, and provisioning so lazy that `dangler warm` can
+index them with nothing configured at all. They have no runtime coupling to
+dangler — each is a plain stdio MCP server that happens to live here.
 
-| Extension | Binary | What it fronts |
+| Extension | Server | What it fronts |
 |---|---|---|
 | [`extensions/godaddy`](extensions/godaddy) | `dangler-godaddy` | GoDaddy REST APIs: domain portfolio, DNS record CRUD, subscriptions, availability — plus a `raw_api` escape hatch reaching every other endpoint (certificates, orders, agreements, aftermarket, …) |
+| [`extensions/google`](extensions/google) | `gws-mcp` | Google Docs and Sheets with full read/write and Drive read-only, on your own OAuth desktop client — files edited in place rather than recreated |
+| [`extensions/ytdl`](extensions/ytdl) | `dangler-ytdl` | A bundled yt-dlp / ffmpeg / deno toolkit for local personal archiving: video, MP3 audio, transcripts |
+
+Language is not part of the contract. The Rust ones are Cargo workspace members:
 
 ```bash
-cargo build --release --workspace   # builds dangler + every extension
+cargo build --release --workspace   # builds dangler + every Rust extension
 ```
 
+`extensions/google` is Python and brings its own runner (`uv`), so it is not a
+workspace member and `cargo build` does not touch it.
+
 Each extension documents its own provisioning in its README; the commented
-`[servers.godaddy]` block in [dangler.example.toml](dangler.example.toml) shows
-the fleet wiring, including `identity` and `setup_hint`.
+blocks in [dangler.example.toml](dangler.example.toml) show the fleet wiring for
+all three, including `identity` and `setup_hint`.
 
 ## Current limits
 

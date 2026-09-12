@@ -64,22 +64,45 @@ status warm → cold, schemas intact.
 
 ## Extensions (first-party fleet servers)
 
-`extensions/<name>/` are workspace member crates, each a standalone stdio MCP
-server meant to be listed in `dangler.toml` like any third-party server — no
-coupling to dangler at runtime. House rules for an extension:
+`extensions/<name>/` is a standalone stdio MCP server we own, meant to be listed
+in `dangler.toml` like any third-party server — **no coupling to dangler at
+runtime**. That independence is the whole contract: an extension is a normal MCP
+server that happens to live in this repo, and it keeps working if dangler
+disappears.
 
-- **Manual `ServerHandler`** (dangler's own style) — hand-written JSON schemas,
-  `match`-based dispatch. Static surfaces don't need the `#[tool]` macros.
-- **Lazy credentials** — the server must start and answer `tools/list` with no
-  provisioning, so `dangler warm` can harvest schemas cold; every call that
-  needs credentials fails with the setup hint instead.
+House rules, ordered by what they cost when broken:
+
 - **stderr-only logging** — stdout is the transport (see the drain-stderr scar).
-- **A read-only switch** where the wrapped service has destructive writes
-  (`GODADDY_READ_ONLY=1` mirrors the mongodb `--readOnly` convention).
+- **Lazy provisioning** — the server must start and answer `tools/list` with no
+  credentials, no toolkit, nothing configured, so `dangler warm` harvests
+  schemas cold. Every call that needs the missing piece fails with a setup hint
+  naming it, and the config's `setup_hint` should say the same sentence.
+- **Hand-written tool schemas** — a static surface is small enough to write out,
+  and the prose a model reads is worth authoring rather than deriving. In Rust
+  that means a manual `ServerHandler` with `match`-based dispatch, in dangler's
+  own style, not the `#[tool]` macros.
+- **A read-only switch** wherever the wrapped thing writes — remote state
+  (`GODADDY_READ_ONLY=1`) or the local disk (`YTDL_READ_ONLY=1`). Mirrors the
+  mongodb `--readOnly` convention.
+- **An `identity` in the config** — whose account the server acts as. A fleet
+  wearing several different hats is the normal case, and the caller should know
+  which hat before invoking, not after.
 
-First one: `extensions/godaddy` (`dangler-godaddy`) — GoDaddy domains/DNS/
-subscriptions plus a `raw_api` escape hatch covering the long tail of
-endpoints.
+**Language is not part of the contract.** Rust extensions are Cargo workspace
+members built by `cargo build --release --workspace`; others carry their own
+toolchain and are launched by their own runner. `[workspace] members` lists only
+the Rust ones.
+
+| Path | Server | Language | Wraps |
+| --- | --- | --- | --- |
+| `extensions/godaddy` | `dangler-godaddy` | Rust | GoDaddy domains, DNS and subscriptions, plus a `raw_api` escape hatch for the long tail |
+| `extensions/google` | `gws-mcp` | Python, run by `uv` | Google Docs and Sheets read/write and Drive read-only, on your own OAuth desktop client |
+| `extensions/ytdl` | `dangler-ytdl` | Rust | A bundled yt-dlp / ffmpeg / deno toolkit: local video, MP3 and transcript capture |
+
+Two concessions worth knowing: `extensions/google` needs `uv` on PATH and a
+one-time `gws-mcp auth` per machine, and `extensions/ytdl` ships no toolchain at
+all. `YTDL_HOME` points at the toolkit directory, which stays outside the repo
+because it holds large binaries and a cookie jar that is a credential.
 
 ## Roadmap (v0 → useful)
 

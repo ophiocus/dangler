@@ -48,3 +48,28 @@ MDB_MCP_CONNECTION_STRING = "mongodb+srv://user:pass@cluster.example.mongodb.net
 # GODADDY_CREDENTIALS_FILE = "C:/Users/me/.godaddy/credentials"
 # # GODADDY_ENV = "ote"        # test environment instead of production
 # # GODADDY_READ_ONLY = "1"    # refuse every mutating tool
+
+# First-party extension: Google Workspace (extensions/google in this repo).
+# Python rather than Rust, so it is run through uv rather than a built binary.
+# Secrets stay in ~/.gcp: the OAuth desktop client and the per-machine token.
+# Run `uv run --directory <repo>/extensions/google gws-mcp auth` once per
+# machine before first use. See extensions/google/README.md.
+# [servers.google]
+# command = "uv"
+# args = ["run", "--directory", "C:/path/to/dangler/extensions/google", "gws-mcp"]
+# identity = "your Google account (Docs + Sheets read/write, Drive read-only)"
+# setup_hint = "put an OAuth desktop client at ~/.gcp/client_secret.json, then run `uv run --directory <repo>/extensions/google gws-mcp auth` and approve in the browser"
+
+# First-party extension: local YouTube archiving (extensions/ytdl in this repo).
+# The binary carries no toolchain — YTDL_HOME points at the directory holding
+# bin/yt-dlp.exe, bin/deno.exe, bin/ffmpeg.exe and scripts/.
+# See extensions/ytdl/README.md.
+# [servers.ytdl]
+# command = "C:/path/to/dangler/target/release/dangler-ytdl.exe"
+# identity = "local personal archiving"
+# setup_hint = "point YTDL_HOME at the ytdownloader toolkit directory; capture a browser session with bin\\ytlogin.cmd anon if YouTube starts refusing anonymous extraction"
+# [servers.ytdl.env]
+# YTDL_HOME = "C:/path/to/ytdownloader"
+# # YTDL_DOWNLOADS = "D:/archive"   # default: <YTDL_HOME>/downloads
+# # YTDL_TIMEOUT_SECS = "1800"      # default 900; raise for long videos
+# # YTDL_READ_ONLY = "1"            # refuse every tool that writes to disk

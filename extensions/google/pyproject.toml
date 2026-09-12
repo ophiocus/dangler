@@ -1,0 +1,25 @@
+[project]
+name = "gws-mcp"
+version = "0.1.0"
+description = "Minimal, self-owned MCP server for Google Docs + Sheets (full CRUD) and read-only Drive. No third-party server code: only Anthropic's MCP SDK and Google's official client libraries."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Carlos Santana", email = "csantanad@gmail.com" }]
+dependencies = [
+  "mcp>=1.2,<2",                        # Anthropic's official MCP Python SDK
+  "google-api-python-client>=2.150",    # Google's official REST client
+  "google-auth>=2.35",
+  "google-auth-oauthlib>=1.2",          # Google's official OAuth installed-app flow
+  "google-auth-httplib2>=0.2",
+]
+
+[project.scripts]
+gws-mcp = "gws_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gws_mcp"]
