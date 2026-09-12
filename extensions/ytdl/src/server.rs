@@ -335,7 +335,10 @@ impl ServerHandler for Ytdl {
                     .await?;
                 let info: Value = serde_json::from_str(run.stdout.trim()).map_err(|e| {
                     McpError::internal_error(
-                        format!("yt-dlp metadata was not JSON: {e}; {}", toolkit::tail(&run.stderr, 5)),
+                        format!(
+                            "yt-dlp metadata was not JSON: {e}; {}",
+                            toolkit::tail(&run.stderr, 5)
+                        ),
                         None,
                     )
                 })?;
@@ -351,7 +354,12 @@ impl ServerHandler for Ytdl {
                 let (dir, template) = Self::output_template(&home, a.output_dir, a.playlist);
 
                 let mut args = vec![
-                    if a.playlist { "--yes-playlist" } else { "--no-playlist" }.to_string(),
+                    if a.playlist {
+                        "--yes-playlist"
+                    } else {
+                        "--no-playlist"
+                    }
+                    .to_string(),
                     "-o".into(),
                     template,
                     "--print".into(),
@@ -384,7 +392,12 @@ impl ServerHandler for Ytdl {
 
                 let run = self
                     .ytdlp(vec![
-                        if a.playlist { "--yes-playlist" } else { "--no-playlist" }.to_string(),
+                        if a.playlist {
+                            "--yes-playlist"
+                        } else {
+                            "--no-playlist"
+                        }
+                        .to_string(),
                         "-x".into(),
                         "--audio-format".into(),
                         "mp3".into(),

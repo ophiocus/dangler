@@ -46,7 +46,10 @@ pub fn home() -> Result<PathBuf> {
         .ok_or_else(|| anyhow!("YTDL_HOME is not set. {SETUP_HINT}"))?;
     let path = PathBuf::from(raw);
     if !path.is_dir() {
-        bail!("YTDL_HOME ({}) is not a directory. {SETUP_HINT}", path.display());
+        bail!(
+            "YTDL_HOME ({}) is not a directory. {SETUP_HINT}",
+            path.display()
+        );
     }
     Ok(path)
 }
@@ -55,7 +58,10 @@ pub fn home() -> Result<PathBuf> {
 fn required(home: &Path, rel: &str) -> Result<PathBuf> {
     let path = home.join(rel);
     if !path.exists() {
-        bail!("{} is missing from the toolkit. {SETUP_HINT}", path.display());
+        bail!(
+            "{} is missing from the toolkit. {SETUP_HINT}",
+            path.display()
+        );
     }
     Ok(path)
 }
