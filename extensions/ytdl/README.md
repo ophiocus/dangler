@@ -52,13 +52,27 @@ ones that explain what is missing.
 | `YTDL_READ_ONLY` | unset | Refuse every tool that writes to disk |
 | `DANGLER_DEBUG` | unset | Debug-level logging, to stderr |
 
-## Downloads are synchronous
+## Downloads are synchronous, and stay that way
 
 A download holds the MCP call open until it finishes, and a long video can take
 minutes. The timeout exists to stop a wedged extractor holding it open forever,
 not to bound normal work — raise `YTDL_TIMEOUT_SECS` rather than lowering
-expectations. An async job model is the obvious next step if this becomes
-annoying in practice.
+expectations.
+
+**An async job model is not the fix, it is a trap.** Two lifecycles would eat
+it. A job that returns immediately leaves `inflight == 0`, so dangler's idle
+reaper is free to cancel the child, and `kill_on_drop` takes the running
+download with it — the fleet would be killing its own background work on a
+timer it has every right to enforce. Above that, a poll-until-done tool is a
+call the model has to keep making, and paying for a round trip per poll is how
+you get chewed alive by the thing you were trying to be efficient with.
+
+If a long download really does need to outlive a call, the work has to leave
+the MCP child entirely: detach a process that writes to disk on its own, and
+let these tools report on the filesystem rather than on a job table. Until
+there is a reason to build that, synchronous with a generous ceiling is the
+honest shape. The levers meanwhile are `YTDL_TIMEOUT_SECS` and, on the dangler
+side, `idle_timeout_secs = 0` for this server.
 
 ## When YouTube refuses
 
