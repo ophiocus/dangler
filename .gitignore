@@ -1,3 +1,6 @@
 /target
 # local fleet config — carries credentials (connection strings, tokens)
 /dangler.toml
+
+# Python bytecode from scripts/
+__pycache__/

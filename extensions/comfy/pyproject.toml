@@ -1,0 +1,21 @@
+[project]
+name = "comfy-mcp"
+version = "0.1.0"
+description = "MCP front for the AIProd image gateway: any Claude session, on any seat, acquires generated images from the one local ComfyUI service through the same executor notebook. Only Anthropic's MCP SDK; the HTTP side is stdlib."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Carlos Santana", email = "csantanad@gmail.com" }]
+dependencies = [
+  "mcp>=1.2,<2",   # Anthropic's official MCP Python SDK
+]
+
+[project.scripts]
+comfy-mcp = "comfy_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/comfy_mcp"]

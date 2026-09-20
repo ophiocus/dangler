@@ -54,14 +54,21 @@ command = "npx"
 args = ["-y", "@modelcontextprotocol/server-everything"]
 
 [servers.mongodb]
-command = "npx"
+command = "C:/Program Files/nodejs/npx.cmd"   # Windows: the .cmd shim, not bare `npx`
 args = ["-y", "mongodb-mcp-server@latest", "--readOnly"]
-[servers.mongodb.env]
-MDB_MCP_CONNECTION_STRING = "mongodb+srv://…"
+identity = "Atlas as the scoped mcp_readonly user"
+setup_hint = "write MDB_MCP_CONNECTION_STRING=… into ~/.mongodb/credentials"
+env_file = "C:/Users/you/.mongodb/credentials"   # secrets by reference, never inline
 ```
 
-> ⚠️ `dangler.toml` tends to accumulate credentials (connection strings, tokens) —
-> keep it out of version control. This repo gitignores it.
+`env_file` is a dotenv-shaped file of `KEY=VALUE` lines merged into the child's
+environment; the inline `[servers.<name>.env]` map wins on a clash, so one shared
+file can be overridden per server. Comments and blank lines are ignored, and a
+missing file fails the spawn with the file named and the `setup_hint` attached,
+rather than starting a server with no credentials.
+
+> ⚠️ Keep credentials out of `dangler.toml` — reference them with `env_file`.
+> The config still tends to accumulate paths and identities; this repo gitignores it.
 
 Then register dangler as the *only* MCP server your client needs:
 

@@ -32,6 +32,14 @@ pub struct ServerSpec {
     /// Extra environment for the child. Remember `WSLENV` when bridging into WSL.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// A dotenv-shaped file of `KEY=VALUE` lines merged into the child's
+    /// environment before [`ServerSpec::env`], which wins on a clash.
+    ///
+    /// This is how a wrapped server's secret stays OUT of `dangler.toml`: the
+    /// config references the file, the file holds the value, and neither the
+    /// key's value nor the file's contents are ever logged. `#` comments and
+    /// blank lines are ignored; surrounding quotes on a value are stripped.
+    pub env_file: Option<PathBuf>,
     /// Working directory for the child; inherits dangler's when unset.
     pub cwd: Option<PathBuf>,
     /// Per-server idle reap override (seconds; 0 = never reap this server).
@@ -44,6 +52,37 @@ pub struct ServerSpec {
     /// Tecnocrática account"). Shown in list_servers and appended to spawn
     /// failures so an unprovisioned server explains itself.
     pub setup_hint: Option<String>,
+}
+
+impl ServerSpec {
+    /// The child's extra environment: `env_file` first, then `env` on top.
+    ///
+    /// A missing or unreadable `env_file` is an error here rather than a silent
+    /// spawn without credentials — the failure then names the file, and the
+    /// server's `setup_hint` says how to fill it.
+    pub fn child_env(&self) -> Result<BTreeMap<String, String>> {
+        let mut out = BTreeMap::new();
+        if let Some(path) = &self.env_file {
+            let raw = std::fs::read_to_string(path)
+                .with_context(|| format!("reading env_file {}", path.display()))?;
+            for line in raw.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                let Some((k, v)) = line.split_once('=') else { continue };
+                let v = v.trim();
+                let v = v
+                    .strip_prefix('"')
+                    .and_then(|s| s.strip_suffix('"'))
+                    .or_else(|| v.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+                    .unwrap_or(v);
+                out.insert(k.trim().to_string(), v.to_string());
+            }
+        }
+        out.extend(self.env.clone());
+        Ok(out)
+    }
 }
 
 impl Config {
@@ -67,6 +106,51 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn env_file_is_merged_under_the_inline_env() {
+        let dir = std::env::temp_dir().join("dangler-env-file-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("creds");
+        std::fs::write(
+            &path,
+            "# a comment\n\nSECRET=mongodb://host/db\nQUOTED=\"with spaces\"\nOVERRIDDEN=from-file\n",
+        )
+        .unwrap();
+
+        let cfg: Config = toml::from_str(&format!(
+            r#"
+            [servers.alpha]
+            command = "npx"
+            env_file = "{}"
+            [servers.alpha.env]
+            OVERRIDDEN = "from-config"
+            "#,
+            path.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+        let env = cfg.servers["alpha"].child_env().unwrap();
+        assert_eq!(env["SECRET"], "mongodb://host/db");
+        assert_eq!(env["QUOTED"], "with spaces");
+        // the inline map wins, so a config can override one key of a shared file
+        assert_eq!(env["OVERRIDDEN"], "from-config");
+        assert!(!env.contains_key("# a comment"));
+    }
+
+    #[test]
+    fn missing_env_file_names_the_file() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [servers.alpha]
+            command = "npx"
+            env_file = "/no/such/credentials"
+            "#,
+        )
+        .unwrap();
+        let err = cfg.servers["alpha"].child_env().unwrap_err().to_string();
+        assert!(err.contains("credentials"), "{err}");
+    }
 
     #[test]
     fn parses_full_server_spec() {

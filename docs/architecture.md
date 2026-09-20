@@ -84,6 +84,11 @@ House rules, ordered by what they cost when broken:
 - **A read-only switch** wherever the wrapped thing writes — remote state
   (`GODADDY_READ_ONLY=1`) or the local disk (`YTDL_READ_ONLY=1`). Mirrors the
   mongodb `--readOnly` convention.
+- **Secrets by reference** — a wrapped server's credential lives in a file the
+  config names with `env_file`, never as a literal in `dangler.toml`. The
+  extension reads it through the environment dangler hands it, dangler never
+  logs a value, and `setup_hint` names the file to fill. The inline `env` map is
+  for paths, ids and switches, and it wins over the file on a clash.
 - **An `identity` in the config** — whose account the server acts as. A fleet
   wearing several different hats is the normal case, and the caller should know
   which hat before invoking, not after.
@@ -98,6 +103,7 @@ the Rust ones.
 | `extensions/godaddy` | `dangler-godaddy` | Rust | GoDaddy domains, DNS and subscriptions, plus a `raw_api` escape hatch for the long tail |
 | `extensions/google` | `gws-mcp` | Python, run by `uv` | Google Docs and Sheets read/write and Drive read-only, on your own OAuth desktop client |
 | `extensions/ytdl` | `dangler-ytdl` | Rust | A bundled yt-dlp / ffmpeg / deno toolkit: local video, MP3 and transcript capture |
+| `extensions/comfy` | `comfy-mcp` | Python, run by `uv` | The AIProd image gateway: generated images from the one local ComfyUI service, identical tools on the GPU seat and on remote seats |
 
 Two concessions worth knowing: `extensions/google` needs `uv` on PATH and a
 one-time `gws-mcp auth` per machine, and `extensions/ytdl` ships no toolchain at

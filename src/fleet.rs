@@ -188,7 +188,11 @@ impl Fleet {
             .unwrap_or_default();
         let mut cmd = Command::new(&spec.command);
         cmd.args(&spec.args);
-        for (k, v) in &spec.env {
+        // env_file (secrets, by reference) merged under the inline env map.
+        for (k, v) in spec
+            .child_env()
+            .with_context(|| format!("environment for '{name}'{hint}"))?
+        {
             cmd.env(k, v);
         }
         if let Some(cwd) = &spec.cwd {
@@ -395,6 +399,7 @@ mod tests {
             command: "unused".into(),
             args: vec![],
             env: Default::default(),
+            env_file: None,
             cwd: None,
             idle_timeout_secs: secs,
             identity: None,
