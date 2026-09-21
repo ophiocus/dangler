@@ -87,7 +87,9 @@ impl ServerSpec {
         match (&self.command, &self.url) {
             (Some(_), Some(_)) => anyhow::bail!("set either `command` or `url`, not both"),
             (None, None) => anyhow::bail!("needs a `command` (stdio) or a `url` (HTTP)"),
-            (Some(command), None) => Ok(Transport::Stdio { command: command.clone() }),
+            (Some(command), None) => Ok(Transport::Stdio {
+                command: command.clone(),
+            }),
             (None, Some(url)) => Ok(Transport::Http {
                 url: url.clone(),
                 oauth: self.auth.as_deref() == Some("oauth"),
@@ -131,7 +133,9 @@ impl ServerSpec {
                 if line.is_empty() || line.starts_with('#') {
                     continue;
                 }
-                let Some((k, v)) = line.split_once('=') else { continue };
+                let Some((k, v)) = line.split_once('=') else {
+                    continue;
+                };
                 let v = v.trim();
                 let v = v
                     .strip_prefix('"')
@@ -192,7 +196,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(matches!(cfg.servers["child"].transport().unwrap(), Transport::Stdio { .. }));
+        assert!(matches!(
+            cfg.servers["child"].transport().unwrap(),
+            Transport::Stdio { .. }
+        ));
         assert!(matches!(
             cfg.servers["remote"].transport().unwrap(),
             Transport::Http { oauth: true, .. }
@@ -201,8 +208,20 @@ mod tests {
             cfg.servers["bearer"].transport().unwrap(),
             Transport::Http { oauth: false, .. }
         ));
-        assert!(cfg.servers["both"].transport().unwrap_err().to_string().contains("not both"));
-        assert!(cfg.servers["neither"].transport().unwrap_err().to_string().contains("`url`"));
+        assert!(
+            cfg.servers["both"]
+                .transport()
+                .unwrap_err()
+                .to_string()
+                .contains("not both")
+        );
+        assert!(
+            cfg.servers["neither"]
+                .transport()
+                .unwrap_err()
+                .to_string()
+                .contains("`url`")
+        );
     }
 
     #[test]
@@ -210,7 +229,11 @@ mod tests {
         let dir = std::env::temp_dir().join("dangler-header-file-test");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("headers");
-        std::fs::write(&path, "# bus token\nAuthorization: Bearer abc123\nX-Kept: from-file\n").unwrap();
+        std::fs::write(
+            &path,
+            "# bus token\nAuthorization: Bearer abc123\nX-Kept: from-file\n",
+        )
+        .unwrap();
 
         let cfg: Config = toml::from_str(&format!(
             r#"

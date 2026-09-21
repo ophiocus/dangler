@@ -16,7 +16,9 @@ use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, CallToolResult, JsonObject, Tool};
 use rmcp::service::{Peer, RoleClient, RunningService};
 use rmcp::transport::TokioChildProcess;
-use rmcp::transport::streamable_http_client::{StreamableHttpClientTransport, StreamableHttpClientTransportConfig};
+use rmcp::transport::streamable_http_client::{
+    StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
+};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
@@ -206,8 +208,7 @@ impl Fleet {
                 }
                 let transport = TokioChildProcess::new(cmd)
                     .with_context(|| format!("spawning '{name}' ({command}){hint}"))?;
-                ()
-                    .serve(transport)
+                ().serve(transport)
                     .await
                     .with_context(|| format!("MCP handshake with '{name}'{hint}"))?
             }
@@ -220,8 +221,7 @@ impl Fleet {
                     let client = crate::oauth::client(name, &url)
                         .await
                         .with_context(|| format!("authorizing '{name}'{hint}"))?;
-                    ()
-                        .serve(StreamableHttpClientTransport::with_client(client, config))
+                    ().serve(StreamableHttpClientTransport::with_client(client, config))
                         .await
                         .with_context(|| format!("MCP handshake with '{name}' at {url}{hint}"))?
                 } else {
@@ -235,9 +235,10 @@ impl Fleet {
                             reqwest::header::HeaderValue::from_str(&v)?,
                         );
                     }
-                    let client = reqwest::Client::builder().default_headers(headers).build()?;
-                    ()
-                        .serve(StreamableHttpClientTransport::with_client(client, config))
+                    let client = reqwest::Client::builder()
+                        .default_headers(headers)
+                        .build()?;
+                    ().serve(StreamableHttpClientTransport::with_client(client, config))
                         .await
                         .with_context(|| format!("MCP handshake with '{name}' at {url}{hint}"))?
                 }

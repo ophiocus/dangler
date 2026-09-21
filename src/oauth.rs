@@ -39,7 +39,9 @@ pub fn store_path(server: &str) -> PathBuf {
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)
         .unwrap_or_default();
-    home.join(".dangler").join("oauth").join(format!("{server}.json"))
+    home.join(".dangler")
+        .join("oauth")
+        .join(format!("{server}.json"))
 }
 
 /// An HTTP client that carries (and refreshes) the stored bearer.
@@ -48,11 +50,10 @@ pub fn store_path(server: &str) -> PathBuf {
 /// contract as a missing `env_file`: explain, name the fix, do not half-start.
 pub async fn client(server: &str, url: &str) -> Result<AuthClient<reqwest::Client>> {
     let path = store_path(server);
-    let raw = std::fs::read_to_string(&path).map_err(|_| {
-        anyhow!("'{server}' has no OAuth grant yet — run: dangler auth {server}")
-    })?;
-    let stored: Stored = serde_json::from_str(&raw)
-        .with_context(|| format!("parsing {}", path.display()))?;
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|_| anyhow!("'{server}' has no OAuth grant yet — run: dangler auth {server}"))?;
+    let stored: Stored =
+        serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
     let token = serde_json::from_value(stored.token)
         .with_context(|| format!("stored token for '{server}' is not an OAuth token response"))?;
 
@@ -64,9 +65,9 @@ pub async fn client(server: &str, url: &str) -> Result<AuthClient<reqwest::Clien
         .set_credentials(&stored.client_id, token)
         .await
         .map_err(|e| anyhow!("restoring the '{server}' grant: {e}"))?;
-    let manager = state
-        .into_authorization_manager()
-        .ok_or_else(|| anyhow!("'{server}': stored grant did not restore into an authorized state"))?;
+    let manager = state.into_authorization_manager().ok_or_else(|| {
+        anyhow!("'{server}': stored grant did not restore into an authorized state")
+    })?;
     Ok(AuthClient::new(reqwest::Client::default(), manager))
 }
 
@@ -90,7 +91,10 @@ async fn authorization_server(resource: &str) -> Result<String> {
     let doc: serde_json::Value = match reqwest::get(&well_known).await {
         Ok(r) if r.status().is_success() => r.json().await.unwrap_or_default(),
         Ok(r) => {
-            eprintln!("protected-resource metadata at {well_known}: HTTP {}", r.status());
+            eprintln!(
+                "protected-resource metadata at {well_known}: HTTP {}",
+                r.status()
+            );
             serde_json::Value::Null
         }
         Err(e) => {
@@ -104,7 +108,13 @@ async fn authorization_server(resource: &str) -> Result<String> {
         .and_then(|a| a.first())
         .and_then(|v| v.as_str())
         .map(str::to_string)
-        .unwrap_or_else(|| format!("{}://{}", parsed.scheme(), parsed.host_str().unwrap_or_default())))
+        .unwrap_or_else(|| {
+            format!(
+                "{}://{}",
+                parsed.scheme(),
+                parsed.host_str().unwrap_or_default()
+            )
+        }))
 }
 
 /// The one interactive step: register, open consent in the operator's browser,
@@ -144,22 +154,33 @@ pub async fn authorize(server: &str, url: &str, scopes: &[&str]) -> Result<()> {
     std::fs::create_dir_all(path.parent().expect("store path has a parent"))?;
     std::fs::write(
         &path,
-        serde_json::to_vec_pretty(&Stored { client_id, token: serde_json::to_value(token)? })?,
+        serde_json::to_vec_pretty(&Stored {
+            client_id,
+            token: serde_json::to_value(token)?,
+        })?,
     )?;
     restrict(&path);
-    println!("granted — token stored at {} (value not shown)", path.display());
+    println!(
+        "granted — token stored at {} (value not shown)",
+        path.display()
+    );
     Ok(())
 }
 
 /// Block on loopback for the provider's redirect, and answer the browser.
 fn wait_for_code() -> Result<(String, String)> {
-    let listener = TcpListener::bind(("127.0.0.1", CALLBACK_PORT))
-        .with_context(|| format!("listening on 127.0.0.1:{CALLBACK_PORT} for the OAuth redirect"))?;
+    let listener = TcpListener::bind(("127.0.0.1", CALLBACK_PORT)).with_context(|| {
+        format!("listening on 127.0.0.1:{CALLBACK_PORT} for the OAuth redirect")
+    })?;
     let (mut stream, _) = listener.accept()?;
     let mut line = String::new();
     BufReader::new(stream.try_clone()?).read_line(&mut line)?;
     // "GET /callback?code=…&state=… HTTP/1.1"
-    let target = line.split_whitespace().nth(1).unwrap_or_default().to_string();
+    let target = line
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or_default()
+        .to_string();
     let query = target.split_once('?').map(|(_, q)| q).unwrap_or_default();
     let mut code = None;
     let mut csrf = None;
