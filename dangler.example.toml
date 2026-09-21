@@ -29,6 +29,25 @@ MDB_MCP_CONNECTION_STRING = "mongodb+srv://user:pass@cluster.example.mongodb.net
 # MDB_MCP_CONNECTION_STRING = "mongodb+srv://user:pass@cluster.example.mongodb.net/db"
 # WSLENV = "MDB_MCP_CONNECTION_STRING"
 
+# A hosted MCP endpoint — no child process; dangler is the HTTP client.
+# `url` replaces `command` (set one, never both). The bearer goes in a file of
+# `Header: value` lines, so this config keeps paths and identities, not secrets.
+# [servers.mybus]
+# url = "https://api.example.com/mcp"
+# header_file = "C:/Users/me/.dangler/mybus.headers"    # Authorization: Bearer <token>
+# identity = "the shared event bus, account 'me'"
+# setup_hint = "write `Authorization: Bearer <token>` into ~/.dangler/mybus.headers; check the service with curl https://api.example.com/healthz"
+# [servers.mybus.headers]
+# X-Client = "dangler"      # inline headers are merged on top of header_file
+
+# An endpoint that answers 401 with an OAuth challenge: dangler runs the dance
+# and holds the tokens in ~/.dangler/oauth/<server>.json. Consent is granted once,
+# by you, in your own browser: `dangler auth vendor`.
+# [servers.vendor]
+# url = "https://mcp.vendor.com/mcp"
+# auth = "oauth"
+# setup_hint = "run `dangler auth vendor` once on this machine and approve in the browser"
+
 # Any local MCP server binary works the same way:
 # [servers.my-local-server]
 # command = "C:/path/to/my-mcp-server.exe"
@@ -63,7 +82,8 @@ MDB_MCP_CONNECTION_STRING = "mongodb+srv://user:pass@cluster.example.mongodb.net
 # First-party extension: local YouTube archiving (extensions/ytdl in this repo).
 # The binary carries no toolchain — YTDL_HOME points at the directory holding
 # bin/yt-dlp.exe, bin/deno.exe, bin/ffmpeg.exe and scripts/.
-# See extensions/ytdl/README.md.
+# See extensions/ytdl/README.md — and extensions/comfy for the image service
+# (uv-run like google; AIPROD_HOME on the GPU seat, AIPROD_TRANSPORT=bus elsewhere).
 # [servers.ytdl]
 # command = "C:/path/to/dangler/target/release/dangler-ytdl.exe"
 # identity = "local personal archiving"

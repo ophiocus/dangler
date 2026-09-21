@@ -12,9 +12,37 @@
 
 - **Upstream**: dangler serves MCP (rmcp `ServerHandler`, implemented *manually* — the tool
   surface is dynamic by nature, so no static `#[tool]` macros).
-- **Downstream**: dangler is an MCP client to each configured server
-  (`rmcp` client + `TokioChildProcess` transport). Children are spawned on first touch
+- **Downstream**: dangler is an MCP client to each configured server — a stdio child
+  (`rmcp` client + `TokioChildProcess`) or a hosted endpoint
+  (`StreamableHttpClientTransport`). Children are spawned on first touch
   (`load_server` / `call_tool`), kept warm, and reaped by `drop_server`.
+
+## HTTP downstream (shipped 2026-09-21)
+
+A fleet entry carries either a `command` (stdio child) or a `url` (streamable HTTP);
+`transport()` enforces the exclusive-or once, at load, rather than at every call site.
+Two ways to authenticate, both by reference:
+
+- **Static bearer / API key** — `header_file`, a file of `Header: value` lines merged
+  under the inline `headers` map. This is `env_file`'s rule applied to HTTP: the secret
+  is named by the config, held by the file, and never logged.
+- **OAuth** (`auth = "oauth"`) — for an endpoint that answers `401` with a
+  `WWW-Authenticate` challenge. `oauth.rs` owns the two things the library cannot: where
+  tokens live (`~/.dangler/oauth/<server>.json`, outside every repo) and how the operator
+  says yes (`dangler auth <server>`, consent in their own browser, loopback redirect on
+  port 8899). A session never mints an authorization code for itself.
+
+An HTTP server has no process, so nothing is spawned, nothing is reaped, and `status` is
+warm as soon as its schemas are cached. Everything above it — `load_server`,
+`search_tools`, `call_tool`, `identity`, `setup_hint` — behaves identically, which is the
+point: the caller should not have to know where a tool physically runs.
+
+What this changes for ingestion: a hosted MCP endpoint is now an ordinary fleet entry
+(`LIST`), not a service that needs a first-party extension. `WRAP` narrows to what it
+always should have meant — lifecycle, a bundled toolkit, or an identity dangler must
+supply. `myevery` was the first ingestion on this path (`url` + `header_file`,
+2026-09-21), and it retired a client registration that had put a bearer in a
+project-shaped file.
 
 ## The dangle
 
@@ -116,10 +144,13 @@ because it holds large binaries and a cookie jar that is a credential.
 - [x] **Idle reaping** — per-server/global `idle_timeout_secs`, in-flight guard (2026-07-27).
 - [ ] **Streamable HTTP upstream** (`transport-streamable-http-server` feature) so
       claude.ai custom connectors can use dangler too.
-- [ ] **HTTP downstream** (`transport-streamable-http-client`) for remote MCP servers.
+- [x] **HTTP downstream** (`transport-streamable-http-client-reqwest`) for hosted MCP
+      servers: `url` + `header_file`, or `auth = "oauth"` with `dangler auth <server>`
+      (2026-09-21).
 - [ ] **Namespaced passthrough mode** — optionally re-advertise a loaded server's tools as
       real upstream tools (`<server>__<tool>`) via `tools/list_changed` notifications, so
       clients that support dynamic tool lists skip the `call_tool` indirection.
-- [ ] Auth passthrough for downstream servers needing OAuth (hard; see rmcp `auth` feature).
+- [x] Auth passthrough for downstream servers needing OAuth — dangler holds the tokens
+      and the operator grants them once (2026-09-21).
 - [x] Tests: config parsing, cache persistence, schema search, reap decision logic
       (fleet lifecycle against a toy MCP server still pending).

@@ -11,8 +11,10 @@ one verdict per registration:
 
     DELETE  the target is retired; remove the entry
     REMOVE  the target is already served by a dangler fleet entry; remove the entry
-    LIST    a stdio server: add it to dangler.toml as-is, move env secrets to referenced files
-    WRAP    an HTTP/SSE server: needs a first-party extension (dangler has no HTTP downstream)
+    LIST    a server dangler can front as-is: a stdio `command`, or (since HTTP downstream
+            shipped) a `url` with its bearer in a `header_file` / `auth = "oauth"`
+    WRAP    needs a first-party extension: lifecycle, a toolkit, or an identity dangler
+            must supply that a plain registration cannot
     SKIP    out of scope (plugin marketplaces, vendored trees, paths in the allowlist)
 
 Exit status is 1 while any DELETE / REMOVE / LIST / WRAP verdict remains, 0 when the
@@ -129,7 +131,10 @@ def verdict(name: str, kind: str, target: str, fleet: set[str]) -> tuple[str, st
             return "WRAP", f"needs extension `{fleet_name}` (not in the fleet yet)"
     if kind == "stdio":
         return "LIST", "stdio: list in dangler.toml, move env secrets to referenced files"
-    return "WRAP", "HTTP/SSE: needs a first-party extension (no HTTP downstream in dangler)"
+    # Since HTTP downstream shipped, a hosted endpoint is an ordinary fleet entry: a
+    # `url`, with a static bearer in `header_file` or `auth = "oauth"` when the endpoint
+    # answers 401 with a challenge. It only earns WRAP if it needs more than a request.
+    return "LIST", "http: list in dangler.toml as `url` + `header_file` (static bearer) or `auth = \"oauth\"`"
 
 
 def client_registrations(path: Path):

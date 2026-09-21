@@ -20,12 +20,28 @@ pub struct Config {
     pub servers: BTreeMap<String, ServerSpec>,
 }
 
-/// How to launch one downstream MCP server (stdio child process).
+/// How to reach one downstream MCP server: a stdio child process (`command`)
+/// or a streamable-HTTP endpoint (`url`). Exactly one of the two.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerSpec {
     /// Executable to spawn (e.g. `npx`, `wsl`, an absolute binary path).
-    pub command: String,
+    /// Mutually exclusive with [`ServerSpec::url`].
+    pub command: Option<String>,
+    /// Streamable-HTTP MCP endpoint, e.g. `https://mcp.example.com/mcp`.
+    /// No child process is spawned; dangler is the HTTP client.
+    pub url: Option<String>,
+    /// Extra HTTP headers for an `url` server (a bearer, an API key).
+    /// Prefer [`ServerSpec::header_file`] for anything secret.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    /// A file of `Header: value` lines merged under `headers`, so a token
+    /// stays out of `dangler.toml` exactly as `env_file` keeps env secrets out.
+    pub header_file: Option<PathBuf>,
+    /// `"oauth"` for an endpoint that answers 401 with an OAuth challenge:
+    /// dangler holds the tokens (`~/.dangler/oauth/<server>.json`) and the
+    /// operator grants them once with `dangler auth <server>`.
+    pub auth: Option<String>,
     /// Arguments passed to `command`.
     #[serde(default)]
     pub args: Vec<String>,
@@ -54,7 +70,52 @@ pub struct ServerSpec {
     pub setup_hint: Option<String>,
 }
 
+/// How a server is reached, resolved from the spec once so the fleet does not
+/// re-derive it at every touch.
+#[derive(Debug, Clone)]
+pub enum Transport {
+    /// A stdio child process.
+    Stdio { command: String },
+    /// A streamable-HTTP endpoint, with OAuth when `oauth` is set.
+    Http { url: String, oauth: bool },
+}
+
 impl ServerSpec {
+    /// Stdio or HTTP, with the "exactly one" rule enforced here rather than at
+    /// every call site.
+    pub fn transport(&self) -> Result<Transport> {
+        match (&self.command, &self.url) {
+            (Some(_), Some(_)) => anyhow::bail!("set either `command` or `url`, not both"),
+            (None, None) => anyhow::bail!("needs a `command` (stdio) or a `url` (HTTP)"),
+            (Some(command), None) => Ok(Transport::Stdio { command: command.clone() }),
+            (None, Some(url)) => Ok(Transport::Http {
+                url: url.clone(),
+                oauth: self.auth.as_deref() == Some("oauth"),
+            }),
+        }
+    }
+
+    /// Headers for an HTTP server: `header_file` first, then `headers` on top.
+    /// Values are never logged; a missing file fails loudly, naming the file.
+    pub fn http_headers(&self) -> Result<BTreeMap<String, String>> {
+        let mut out = BTreeMap::new();
+        if let Some(path) = &self.header_file {
+            let raw = std::fs::read_to_string(path)
+                .with_context(|| format!("reading header_file {}", path.display()))?;
+            for line in raw.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                if let Some((k, v)) = line.split_once(':') {
+                    out.insert(k.trim().to_string(), v.trim().to_string());
+                }
+            }
+        }
+        out.extend(self.headers.clone());
+        Ok(out)
+    }
+
     /// The child's extra environment: `env_file` first, then `env` on top.
     ///
     /// A missing or unreadable `env_file` is an error here rather than a silent
@@ -106,6 +167,67 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_server_is_stdio_or_http_but_not_both() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [servers.child]
+            command = "npx"
+
+            [servers.remote]
+            url = "https://mcp.example.com/mcp"
+            auth = "oauth"
+
+            [servers.bearer]
+            url = "https://mcp.example.com/mcp"
+
+            [servers.both]
+            command = "npx"
+            url = "https://mcp.example.com/mcp"
+
+            [servers.neither]
+            identity = "nobody"
+            "#,
+        )
+        .unwrap();
+
+        assert!(matches!(cfg.servers["child"].transport().unwrap(), Transport::Stdio { .. }));
+        assert!(matches!(
+            cfg.servers["remote"].transport().unwrap(),
+            Transport::Http { oauth: true, .. }
+        ));
+        assert!(matches!(
+            cfg.servers["bearer"].transport().unwrap(),
+            Transport::Http { oauth: false, .. }
+        ));
+        assert!(cfg.servers["both"].transport().unwrap_err().to_string().contains("not both"));
+        assert!(cfg.servers["neither"].transport().unwrap_err().to_string().contains("`url`"));
+    }
+
+    #[test]
+    fn header_file_is_merged_under_the_inline_headers() {
+        let dir = std::env::temp_dir().join("dangler-header-file-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("headers");
+        std::fs::write(&path, "# bus token\nAuthorization: Bearer abc123\nX-Kept: from-file\n").unwrap();
+
+        let cfg: Config = toml::from_str(&format!(
+            r#"
+            [servers.remote]
+            url = "https://mcp.example.com/mcp"
+            header_file = "{}"
+            [servers.remote.headers]
+            X-Kept = "from-config"
+            "#,
+            path.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+        let h = cfg.servers["remote"].http_headers().unwrap();
+        assert_eq!(h["Authorization"], "Bearer abc123");
+        assert_eq!(h["X-Kept"], "from-config");
+    }
 
     #[test]
     fn env_file_is_merged_under_the_inline_env() {
@@ -176,7 +298,7 @@ mod tests {
         assert_eq!(cfg.servers["alpha"].idle_timeout_secs, None);
         assert_eq!(cfg.idle_timeout_secs, None);
         let alpha = &cfg.servers["alpha"];
-        assert_eq!(alpha.command, "npx");
+        assert_eq!(alpha.command.as_deref(), Some("npx"));
         assert_eq!(alpha.args, vec!["-y", "some-mcp-server"]);
         assert_eq!(alpha.env["FOO"], "bar");
         assert_eq!(alpha.identity.as_deref(), Some("tecnocratica"));

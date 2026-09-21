@@ -14,7 +14,11 @@ members = ["extensions/godaddy", "extensions/ytdl"]
 
 [dependencies]
 anyhow = "1.0.104"
-rmcp = { version = "2.2.0", features = ["server", "client", "macros", "transport-io", "transport-child-process", "schemars"] }
+rmcp = { version = "2.2.0", features = ["server", "client", "macros", "transport-io", "transport-child-process",
+    "transport-streamable-http-client-reqwest", "auth", "schemars"] }
+# pinned to the version rmcp's StreamableHttpClient impl is written against:
+# a second copy of reqwest in the graph is a different type, and the trait would not apply.
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "process", "signal", "time"] }

@@ -32,8 +32,13 @@ file is flagged as a credential in a repository.
 |---|---|---|
 | `DELETE` | The target is retired. | Remove the entry. No wrapping. |
 | `REMOVE` | A fleet entry already serves it. | Remove the entry. |
-| `LIST` | A stdio server we do not own. | Add it to `dangler.toml` as-is: `command`, `args`, an `identity`, a `setup_hint`. Move any env secret to a file and reference the file. Zero code. |
-| `WRAP` | HTTP/SSE, or a service that needs lifecycle, auth or identity dangler must supply. | A first-party extension under `extensions/<name>/`, by the house rules in `architecture.md`. dangler has no HTTP downstream yet, so every HTTP target lands here until that roadmap item ships. |
+| `LIST` | A server dangler can front as-is — a stdio server we do not own, or a hosted HTTP endpoint. | Add it to `dangler.toml`: `command` + `args` for stdio, or `url` + `header_file` (static bearer) / `auth = "oauth"` for HTTP. Always an `identity` and a `setup_hint`. Move every secret to a referenced file. Zero code. |
+| `WRAP` | A service that needs lifecycle, a bundled toolkit, or an identity dangler must supply. | A first-party extension under `extensions/<name>/`, by the house rules in `architecture.md`. |
+
+**Narrowed 2026-09-21.** `WRAP` used to catch every HTTP target, because dangler could
+only front stdio children. HTTP downstream shipped, so a hosted endpoint is now an
+ordinary `LIST` — `myevery` was the first, and took two config lines and no code. Only
+reach for an extension when a plain request is genuinely not enough.
 | `SKIP` | Not ours: plugin marketplaces, vendored trees, anything in `~/.dangler/census.skip`. | None. Scope is the owner's call, one path fragment per line. |
 
 ## The method — five gates, in order
@@ -76,6 +81,18 @@ An ingestion is not done when the extension works. It is done when the last gate
 | A provider hub with five API-key env slots (all empty) | 1, tracked | `LIST`, and the slots become file references |
 | Hosted SaaS servers (OAuth) | several, in course and client trees | owner to scope: `SKIP` or wait for HTTP downstream + auth passthrough |
 
-Not covered by the census, and deliberately: user-level registrations in `~/.claude.json`
-and claude.ai connectors. The same rule applies to the first; the second is outside any
-local funnel.
+Not covered by the census then, and now covered: user-level and project-level
+registrations in `~/.claude.json` are read too (`--client`), so the client's own
+configuration gets the same verdicts. claude.ai connectors stay outside any local funnel.
+
+## Ingestion record — `myevery` (2026-09-21, Desky)
+
+The first HTTP ingestion, kept as the worked example of the five gates.
+
+| Gate | What happened |
+|---|---|
+| 1 · Roster | The bus's own docs are the roster; `docs/SEAT-SETUP-CYPHER.md` and `README.md` in the myevery repo were the thing to change, and were changed to name the fleet entry. |
+| 2 · Build or list | `LIST`, not `WRAP`: `[servers.myevery]` with `url` + `header_file = ~/.dangler/myevery.headers`, `identity`, `setup_hint`. No code. The bearer was moved from the client config into that file, read once and never printed. |
+| 3 · Parity | Through `call_tool` against the new binary: 16 tools dangled by `load_server`, `list_seats` and `list_nodes` read, `post_event` written and read back by `query_events` (seq 29). |
+| 4 · Retire | `claude mcp remove myevery -s user`; `I:\myevery\.mcp.json` deleted; `.mcp.json.example` deleted and the README's "Connecting a seat" section inverted to the dangler route; `docs/PRODUCT.md`'s onboarding item now writes a fleet entry and is told never to write a `.mcp.json`. Two consumers read the bearer out of the retired registration and were repointed at the header file: the `comfy` extension's bus transport and the AIProd gateway's `bus.json` (`token_from`). |
+| 5 · Assurance | `python scripts/mcp_census.py --quiet-skips` reports no ticket for myevery. It still exits 1 for the other open tickets on this machine, which is the tool working, not a failure of this ingestion. |

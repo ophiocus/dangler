@@ -17,8 +17,10 @@ Reaching the GPU seat from another machine — the myevery bus (no network route
   AIPROD_TRANSPORT=bus       carry every gateway call over myevery's piped transport (rendezvous, nothing
                              stored on the bus) instead of HTTP straight to the gateway
   MYEVERY_URL                the bus base URL, e.g. https://api.myevery.tecnocratica.com.co
-  MYEVERY_MCP_JSON           a Claude config that already registers the bus (default ~/.claude.json, per-project
-                             blocks included) — the bearer token is read from there, never copied. Or MYEVERY_TOKEN.
+  MYEVERY_HEADER_FILE        where the bus bearer lives (default ~/.dangler/myevery.headers, the same file
+                             dangler's `myevery` fleet entry references) — read by reference, never copied.
+                             Or MYEVERY_TOKEN. MYEVERY_MCP_JSON still reads it out of a Claude config
+                             (default ~/.claude.json) for a seat whose direct registration is not retired yet.
                              The gateway token is NOT needed on a bus seat.
   AIPROD_GPU_SEAT            handle of the seat that owns the GPU (default desky)
   AIPROD_SEAT                this seat's own handle (default: the host name, lowercased)
@@ -85,15 +87,30 @@ def _find_bus_token(node, url):
 
 
 def _bus_token() -> str:
+    """The bearer, by reference, in the order a migrated seat should find it.
+
+    The canonical home is dangler's header file — the same one the `myevery` fleet entry
+    names, so one file serves both the bus's own MCP tools and this transport. The
+    ~/.claude.json scan below is the pre-ingestion path: it still works for a seat whose
+    direct registration has not been retired yet, and it is deliberately last, because a
+    client registration is exactly what the wrap exists to remove."""
     if os.environ.get("MYEVERY_TOKEN"):
         return os.environ["MYEVERY_TOKEN"]
+    hdr = Path(os.environ.get("MYEVERY_HEADER_FILE", Path.home() / ".dangler" / "myevery.headers")).expanduser()
+    if hdr.is_file():
+        for line in hdr.read_text(encoding="utf-8").splitlines():
+            k, _, v = line.partition(":")
+            if k.strip().lower() == "authorization":
+                tok = v.strip().removeprefix("Bearer ").strip()
+                if tok and "${" not in tok:
+                    return tok
     src = Path(os.environ.get("MYEVERY_MCP_JSON", Path.home() / ".claude.json")).expanduser()
     if src.is_file():
         tok = _find_bus_token(json.loads(src.read_text(encoding="utf-8")), BUS_URL)
         if tok:
             return tok
-    raise GatewayError("bus transport needs the myevery bearer token: set MYEVERY_MCP_JSON to a .mcp.json that "
-                       "registers the bus (the secret is read from there, not copied), or MYEVERY_TOKEN.")
+    raise GatewayError(f"bus transport needs the myevery bearer token: write `Authorization: Bearer <token>` into "
+                       f"{hdr} (the file dangler's `myevery` fleet entry already references), or set MYEVERY_TOKEN.")
 
 
 def _pipe(method: str, channel: str, body: bytes | None = None, timeout: int = 75) -> tuple[int, bytes]:

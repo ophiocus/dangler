@@ -16,10 +16,11 @@ use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, CallToolResult, JsonObject, Tool};
 use rmcp::service::{Peer, RoleClient, RunningService};
 use rmcp::transport::TokioChildProcess;
+use rmcp::transport::streamable_http_client::{StreamableHttpClientTransport, StreamableHttpClientTransportConfig};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
-use crate::config::{Config, ServerSpec};
+use crate::config::{Config, ServerSpec, Transport};
 
 /// Reap a warm child after this long unused, unless configured otherwise.
 pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 600;
@@ -186,24 +187,62 @@ impl Fleet {
             .as_deref()
             .map(|h| format!(" — setup: {h}"))
             .unwrap_or_default();
-        let mut cmd = Command::new(&spec.command);
-        cmd.args(&spec.args);
-        // env_file (secrets, by reference) merged under the inline env map.
-        for (k, v) in spec
-            .child_env()
-            .with_context(|| format!("environment for '{name}'{hint}"))?
+        let service = match spec
+            .transport()
+            .with_context(|| format!("config for '{name}'"))?
         {
-            cmd.env(k, v);
-        }
-        if let Some(cwd) = &spec.cwd {
-            cmd.current_dir(cwd);
-        }
-        let transport = TokioChildProcess::new(cmd)
-            .with_context(|| format!("spawning '{name}' ({}){hint}", spec.command))?;
-        let service = ()
-            .serve(transport)
-            .await
-            .with_context(|| format!("MCP handshake with '{name}'{hint}"))?;
+            Transport::Stdio { command } => {
+                let mut cmd = Command::new(&command);
+                cmd.args(&spec.args);
+                // env_file (secrets, by reference) merged under the inline env map.
+                for (k, v) in spec
+                    .child_env()
+                    .with_context(|| format!("environment for '{name}'{hint}"))?
+                {
+                    cmd.env(k, v);
+                }
+                if let Some(cwd) = &spec.cwd {
+                    cmd.current_dir(cwd);
+                }
+                let transport = TokioChildProcess::new(cmd)
+                    .with_context(|| format!("spawning '{name}' ({command}){hint}"))?;
+                ()
+                    .serve(transport)
+                    .await
+                    .with_context(|| format!("MCP handshake with '{name}'{hint}"))?
+            }
+            // No child process: dangler is the HTTP client. OAuth tokens are
+            // dangler's to hold and refresh (see oauth.rs); a static bearer or
+            // API key comes from headers / header_file.
+            Transport::Http { url, oauth } => {
+                let config = StreamableHttpClientTransportConfig::with_uri(url.clone());
+                if oauth {
+                    let client = crate::oauth::client(name, &url)
+                        .await
+                        .with_context(|| format!("authorizing '{name}'{hint}"))?;
+                    ()
+                        .serve(StreamableHttpClientTransport::with_client(client, config))
+                        .await
+                        .with_context(|| format!("MCP handshake with '{name}' at {url}{hint}"))?
+                } else {
+                    let mut headers = reqwest::header::HeaderMap::new();
+                    for (k, v) in spec
+                        .http_headers()
+                        .with_context(|| format!("headers for '{name}'{hint}"))?
+                    {
+                        headers.insert(
+                            reqwest::header::HeaderName::from_bytes(k.as_bytes())?,
+                            reqwest::header::HeaderValue::from_str(&v)?,
+                        );
+                    }
+                    let client = reqwest::Client::builder().default_headers(headers).build()?;
+                    ()
+                        .serve(StreamableHttpClientTransport::with_client(client, config))
+                        .await
+                        .with_context(|| format!("MCP handshake with '{name}' at {url}{hint}"))?
+                }
+            }
+        };
         let peer = service.peer().clone();
         children.insert(
             name.to_string(),
@@ -396,10 +435,14 @@ mod tests {
 
     fn spec_with_timeout(secs: Option<u64>) -> crate::config::ServerSpec {
         crate::config::ServerSpec {
-            command: "unused".into(),
+            command: Some("unused".into()),
             args: vec![],
             env: Default::default(),
             env_file: None,
+            url: None,
+            headers: Default::default(),
+            header_file: None,
+            auth: None,
             cwd: None,
             idle_timeout_secs: secs,
             identity: None,

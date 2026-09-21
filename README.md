@@ -67,6 +67,28 @@ file can be overridden per server. Comments and blank lines are ignored, and a
 missing file fails the spawn with the file named and the `setup_hint` attached,
 rather than starting a server with no credentials.
 
+A fleet entry is either a **stdio child** (`command`) or a **hosted HTTP endpoint**
+(`url`) — never both:
+
+```toml
+[servers.mybus]                                  # static bearer
+url = "https://api.example.com/mcp"
+header_file = "C:/Users/you/.dangler/mybus.headers"   # one `Authorization: Bearer …` line
+identity = "the shared event bus, account 'you'"
+
+[servers.hosted]                                 # endpoint that answers 401 with a challenge
+url = "https://mcp.vendor.com/mcp"
+auth = "oauth"                                   # then: dangler auth hosted
+```
+
+`header_file` is to HTTP what `env_file` is to stdio: `Header: value` lines, merged
+under the inline `[servers.<name>.headers]` map, so the token stays out of
+`dangler.toml`. With `auth = "oauth"` dangler runs the OAuth 2.1 dance itself —
+discovery, dynamic registration, PKCE, refresh — and keeps the tokens in
+`~/.dangler/oauth/<server>.json`. Consent is the operator's to give, once, in their
+own browser: `dangler auth <server>` (loopback redirect on port 8899), never
+something a session mints for itself.
+
 > ⚠️ Keep credentials out of `dangler.toml` — reference them with `env_file`.
 > The config still tends to accumulate paths and identities; this repo gitignores it.
 
@@ -125,6 +147,7 @@ dangler — each is a plain stdio MCP server that happens to live here.
 | [`extensions/godaddy`](extensions/godaddy) | `dangler-godaddy` | GoDaddy REST APIs: domain portfolio, DNS record CRUD, subscriptions, availability — plus a `raw_api` escape hatch reaching every other endpoint (certificates, orders, agreements, aftermarket, …) |
 | [`extensions/google`](extensions/google) | `gws-mcp` | Google Docs and Sheets with full read/write and Drive read-only, on your own OAuth desktop client — files edited in place rather than recreated |
 | [`extensions/ytdl`](extensions/ytdl) | `dangler-ytdl` | A bundled yt-dlp / ffmpeg / deno toolkit for local personal archiving: video, MP3 audio, transcripts |
+| [`extensions/comfy`](extensions/comfy) | `comfy-mcp` | One local ComfyUI service through the AIProd image gateway — identical tools on the GPU seat and on a remote seat, which reaches it over an event bus's piped transport |
 
 Language is not part of the contract. The Rust ones are Cargo workspace members:
 
@@ -132,23 +155,23 @@ Language is not part of the contract. The Rust ones are Cargo workspace members:
 cargo build --release --workspace   # builds dangler + every Rust extension
 ```
 
-`extensions/google` is Python and brings its own runner (`uv`), so it is not a
-workspace member and `cargo build` does not touch it.
+`extensions/google` and `extensions/comfy` are Python and bring their own runner
+(`uv`), so they are not workspace members and `cargo build` does not touch them.
 
 Each extension documents its own provisioning in its README; the commented
 blocks in [dangler.example.toml](dangler.example.toml) show the fleet wiring for
-all three, including `identity` and `setup_hint`.
+every one, including `identity` and `setup_hint`.
 
 ## Current limits
 
 - **Stdio upstream only** — register it in Claude Code/Desktop or any stdio MCP client;
   no Streamable HTTP endpoint yet, so it can't be a claude.ai custom connector.
-- **Stdio downstream only** — it fronts local child-process servers; hosted/HTTP MCP
-  servers (OAuth connectors) can't be proxied yet.
 - Schema search is cached-substring, not semantic; run `dangler warm` after changing the
   fleet so search sees everything.
 
-All three are on the [roadmap](docs/architecture.md#roadmap-v0--useful).
+Both are on the [roadmap](docs/architecture.md#roadmap-v0--useful). **Downstream is no
+longer stdio-only**: hosted MCP endpoints are fronted natively since 2026-09-21
+(streamable HTTP, static bearer or OAuth) — see the `url` entries above.
 
 ## License
 

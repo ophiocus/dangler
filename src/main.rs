@@ -7,6 +7,7 @@
 
 mod config;
 mod fleet;
+mod oauth;
 mod server;
 
 use std::process::ExitCode;
@@ -37,6 +38,31 @@ async fn main() -> Result<ExitCode> {
 
     if std::env::args().nth(1).as_deref() == Some("warm") {
         return Ok(warm(config, &config_path).await);
+    }
+    // `dangler auth <server>`: the one step a session cannot take for the
+    // operator. Consent happens in their browser, and the grant is stored where
+    // dangler keeps credentials — never in the fleet config, never in a repo.
+    if std::env::args().nth(1).as_deref() == Some("auth") {
+        let Some(name) = std::env::args().nth(2) else {
+            eprintln!("usage: dangler auth <server>");
+            return Ok(ExitCode::FAILURE);
+        };
+        let spec = config
+            .servers
+            .get(&name)
+            .ok_or_else(|| anyhow::anyhow!("no server '{name}' in {}", config_path.display()))?;
+        let crate::config::Transport::Http { url, oauth } = spec.transport()? else {
+            eprintln!("'{name}' is a stdio server — nothing to authorize");
+            return Ok(ExitCode::FAILURE);
+        };
+        if !oauth {
+            eprintln!("'{name}' does not declare `auth = \"oauth\"` — it uses headers/header_file");
+            return Ok(ExitCode::FAILURE);
+        }
+        let scopes: Vec<String> = std::env::args().skip(3).collect();
+        let scope_refs: Vec<&str> = scopes.iter().map(String::as_str).collect();
+        oauth::authorize(&name, &url, &scope_refs).await?;
+        return Ok(ExitCode::SUCCESS);
     }
     serve(config, &config_path).await?;
     Ok(ExitCode::SUCCESS)
