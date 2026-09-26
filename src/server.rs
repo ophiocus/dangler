@@ -91,8 +91,9 @@ impl Dangler {
             Tool::new(
                 TOOL_LIST_SERVERS,
                 "List the configured downstream MCP servers: name, warm/cold status, cached \
-                 tool count, the account identity each server acts as, and setup hints for \
-                 unprovisioned servers.",
+                 tool count, the account identity each server acts as, the skill (name tag) \
+                 that says when to use it, and setup hints for unprovisioned servers. Entries \
+                 listed as disabled carry no skill and are not served until they do.",
                 schema(json!({"type": "object", "properties": {}})),
             ),
             Tool::new(
@@ -151,7 +152,9 @@ impl ServerHandler for Dangler {
             .with_instructions(
                 "dangler fronts a fleet of MCP servers so their schemas don't all load up \
                  front. Discover with list_servers/search_tools, inspect with load_server, \
-                 then drive real work with call_tool {server, tool, arguments}.",
+                 then drive real work with call_tool {server, tool, arguments}. Every server \
+                 carries a skill (its name tag) that dangler installs into the client's skills \
+                 directory; read that skill before loading the server.",
             )
     }
 
@@ -181,12 +184,18 @@ impl ServerHandler for Dangler {
                     .await
                     .iter()
                     .map(|s| {
+                        let status = match (&s.disabled, s.warm) {
+                            (Some(_), _) => "disabled",
+                            (None, true) => "warm",
+                            (None, false) => "cold",
+                        };
                         json!({
                             "name": s.name,
-                            "status": if s.warm { "warm" } else { "cold" },
+                            "status": status,
                             "cached_tools": s.cached_tools,
                             "identity": s.identity,
-                            "setup_hint": s.setup_hint,
+                            "skill": s.skill,
+                            "setup_hint": s.setup_hint.clone().or_else(|| s.disabled.clone()),
                         })
                     })
                     .collect();
@@ -212,6 +221,7 @@ impl ServerHandler for Dangler {
                 Ok(text_result(json!({
                     "server": args.name,
                     "identity": self.fleet.identity_of(&args.name),
+                    "skill": self.fleet.skill_of(&args.name),
                     "tools": tools,
                 })))
             }

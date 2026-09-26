@@ -3,12 +3,14 @@
 //! One MCP server that fronts a configured fleet of downstream MCP servers,
 //! exposing five meta-tools instead of the fleet's full schema surface.
 //! `dangler` serves MCP over stdio; `dangler warm` pre-harvests every server's
-//! schemas into the persistent cache and exits.
+//! schemas into the persistent cache and exits; `dangler skills` installs every
+//! server's skill and reports, which also happens at every start.
 
 mod config;
 mod fleet;
 mod oauth;
 mod server;
+mod skills;
 
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -34,7 +36,25 @@ async fn main() -> Result<ExitCode> {
         .init();
 
     let config_path = Config::default_path();
-    let config = Config::load(&config_path)?;
+    let mut config = Config::load(&config_path)?;
+
+    // Forced default: every fleet entry's skill is installed before anything is
+    // served, and an entry without one is disabled rather than dangled nameless.
+    let report = skills::sync(&mut config)?;
+    if std::env::args().nth(1).as_deref() == Some("skills") {
+        eprint!("{}", skills::describe(&report));
+        return Ok(if report.missing().next().is_some() {
+            ExitCode::FAILURE
+        } else {
+            ExitCode::SUCCESS
+        });
+    }
+    for o in report.missing() {
+        tracing::error!(server = %o.server, reason = %o.problem.as_deref().unwrap_or(""), "disabled: no skill");
+    }
+    for p in &report.pruned {
+        tracing::info!(path = %p.display(), "pruned skill of an entry no longer in the fleet");
+    }
 
     if std::env::args().nth(1).as_deref() == Some("warm") {
         return Ok(warm(config, &config_path).await);

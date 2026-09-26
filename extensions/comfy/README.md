@@ -46,6 +46,10 @@ AIPROD_HOME = "I:/AIProd"
 
 On another seat, drop `AIPROD_HOME` and set `AIPROD_GATEWAY_URL` to the GPU seat.
 
+`SKILL.md` in this folder is the extension's name tag — the `generate-image` skill with
+the workflow table and the prompting rules. dangler installs it into `~/.claude/skills/`
+at every start, so it arrives on a seat with the same `git pull` as the code.
+
 ## Reaching the GPU seat from another machine — the myevery bus
 
 Set `AIPROD_TRANSPORT=bus` and `MYEVERY_URL`. Every gateway call then travels over myevery's **piped transport**

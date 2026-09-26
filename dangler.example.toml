@@ -8,6 +8,15 @@
 # Per-server `idle_timeout_secs` overrides the global value.
 idle_timeout_secs = 600
 
+# Skills: every entry carries a SKILL.md (its name tag) and dangler installs
+# them all into the client's skills directory at every start. An entry without
+# one is listed as `disabled` and not served. Defaults: the skill is looked for
+# at `skill = "<path>"`, else the `--directory` of a `uv run` command, else
+# `<extensions_dir>/<server>/SKILL.md`; `extensions_dir` defaults to the checkout
+# the binary was built in, and skills land in ~/.claude/skills.
+# extensions_dir = "C:/path/to/dangler/extensions"
+# skills_dir = "C:/Users/me/.claude/skills"
+
 [servers.everything]
 # The MCP reference test server — handy for smoke-testing dangler itself.
 command = "npx"
@@ -17,6 +26,9 @@ args = ["-y", "@modelcontextprotocol/server-everything"]
 [servers.mongodb]
 command = "npx"
 args = ["-y", "mongodb-mcp-server@latest", "--readOnly"]
+# A third-party server has no extension folder, so name its skill explicitly —
+# a SKILL.md you write, saying when a session should reach for this server.
+skill = "C:/path/to/skills/mongodb/SKILL.md"
 [servers.mongodb.env]
 MDB_MCP_CONNECTION_STRING = "mongodb+srv://user:pass@cluster.example.mongodb.net/db"
 

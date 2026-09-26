@@ -64,7 +64,9 @@ registrations — but client-agnostic, self-hosted, and under your config contro
   (in-memory v0), search over cached tools.
 - `server.rs` — upstream `ServerHandler`: the 5 meta-tools, hand-written JSON schemas,
   dispatch into the fleet.
-- `main.rs` — load config, serve stdio.
+- `skills.rs` — every entry's `SKILL.md` resolved, validated, installed into the
+  client's skills directory, stale copies pruned; entries without one disabled.
+- `main.rs` — load config, sync skills, serve stdio (`warm`, `auth`, `skills` subcommands).
 
 ## Battle-scar: always drain stderr (resolved 2026-07-22)
 
@@ -120,6 +122,22 @@ House rules, ordered by what they cost when broken:
 - **An `identity` in the config** — whose account the server acts as. A fleet
   wearing several different hats is the normal case, and the caller should know
   which hat before invoking, not after.
+- **A `SKILL.md` next to the code — the name tag (forced, 2026-09-26).** Hiding
+  schemas until `load_server` has a blind spot: nothing in a fresh session says
+  *when* to reach for a server. That sentence is a skill — frontmatter `name` +
+  `description` the client indexes in every session — plus the craft the schemas
+  cannot hold (which tool for which need, the rules paid for in use). Every
+  fleet entry carries one; dangler installs them all into the client's skills
+  directory (`~/.claude/skills/<name>/SKILL.md`) at every start and on
+  `dangler skills`, so a `git pull` of this repo is also the skill's
+  distribution. **An entry without a skill is not served** — it is listed as
+  `disabled` with the path it was expected at. Resolution: `skill = <path>` in
+  the config, else `<--directory>/SKILL.md` for a `uv run`-style command, else
+  `<extensions_dir>/<server>/SKILL.md` (the checkout the binary was built in, or
+  `extensions_dir` / `DANGLER_EXTENSIONS`). A hosted wrapper with no code still
+  gets a folder for its tag (`extensions/myevery`). Installed copies carry a
+  marker line; dangler overwrites or prunes only files that carry it, so a
+  hand-written skill is never clobbered — a name clash is reported as a conflict.
 
 **Language is not part of the contract.** Rust extensions are Cargo workspace
 members built by `cargo build --release --workspace`; others carry their own
@@ -132,6 +150,7 @@ the Rust ones.
 | `extensions/google` | `gws-mcp` | Python, run by `uv` | Google Docs and Sheets read/write and Drive read-only, on your own OAuth desktop client |
 | `extensions/ytdl` | `dangler-ytdl` | Rust | A bundled yt-dlp / ffmpeg / deno toolkit: local video, MP3 and transcript capture |
 | `extensions/comfy` | `comfy-mcp` | Python, run by `uv` | The AIProd image gateway: generated images from the one local ComfyUI service, identical tools on the GPU seat and on remote seats |
+| `extensions/myevery` | — (hosted, `url`) | none — a name tag only | The myevery bus; the folder exists so the wrapper carries its `SKILL.md` like every other entry |
 
 Two concessions worth knowing: `extensions/google` needs `uv` on PATH and a
 one-time `gws-mcp auth` per machine, and `extensions/ytdl` ships no toolchain at

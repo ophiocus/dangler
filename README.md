@@ -104,6 +104,21 @@ Optionally pre-index the whole fleet so `search_tools` works before anything has
 dangler warm    # spawns each server once, harvests schemas into ~/.dangler/cache.json, reaps
 ```
 
+**Every fleet entry carries a skill, and dangler installs it.** Hidden schemas have a
+blind spot — nothing tells a fresh session *when* to reach for a server — so each entry
+ships a `SKILL.md` (frontmatter `name` + `description`, then the craft: which tool for
+which need, the rules learned in use). At every start dangler copies them into the
+client's skills directory (`~/.claude/skills/<name>/SKILL.md`, override with `skills_dir`
+or `DANGLER_SKILLS_DIR`), prunes the copies of entries that left the fleet, and **disables
+any entry without one** (listed as `disabled`, with the path it was expected at). The
+skill is found at `skill = "<path>"`, else the `--directory` of a `uv run` command, else
+`<extensions_dir>/<server>/SKILL.md`. Copies carry a marker line and only marked files
+are ever overwritten, so your own skills are safe.
+
+```bash
+dangler skills  # install/refresh every entry's skill, print the table, exit 1 if any entry is disabled
+```
+
 ## How it works
 
 ```
@@ -148,6 +163,10 @@ dangler — each is a plain stdio MCP server that happens to live here.
 | [`extensions/google`](extensions/google) | `gws-mcp` | Google Docs and Sheets with full read/write and Drive read-only, on your own OAuth desktop client — files edited in place rather than recreated |
 | [`extensions/ytdl`](extensions/ytdl) | `dangler-ytdl` | A bundled yt-dlp / ffmpeg / deno toolkit for local personal archiving: video, MP3 audio, transcripts |
 | [`extensions/comfy`](extensions/comfy) | `comfy-mcp` | One local ComfyUI service through the AIProd image gateway — identical tools on the GPU seat and on a remote seat, which reaches it over an event bus's piped transport |
+| [`extensions/myevery`](extensions/myevery) | *(hosted `url` entry)* | No code — the folder carries the bus's `SKILL.md`, because a wrapper wears a name tag like every other entry |
+
+Each folder carries a `SKILL.md` next to its code: the name tag dangler installs into the
+client at start (see above), so pulling this repo is also how the skill reaches a machine.
 
 Language is not part of the contract. The Rust ones are Cargo workspace members:
 

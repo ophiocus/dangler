@@ -15,9 +15,22 @@ pub struct Config {
     /// Reap a warm child after this many seconds unused (default 600; 0 = never).
     /// Per-server [`ServerSpec::idle_timeout_secs`] overrides this.
     pub idle_timeout_secs: Option<u64>,
+    /// Where first-party extensions live, so `<extensions_dir>/<server>/SKILL.md`
+    /// is the default skill of every entry. Defaults to the checkout the running
+    /// binary was built in; `DANGLER_EXTENSIONS` overrides both.
+    pub extensions_dir: Option<PathBuf>,
+    /// Where skills are installed (default `~/.claude/skills`; `DANGLER_SKILLS_DIR` wins).
+    pub skills_dir: Option<PathBuf>,
     /// The downstream fleet, keyed by the server name used in every meta-tool.
     #[serde(default)]
     pub servers: BTreeMap<String, ServerSpec>,
+    /// Entries removed from `servers` because they carry no usable skill,
+    /// with the reason. Filled by `skills::sync`, shown by `list_servers`.
+    #[serde(skip)]
+    pub disabled: BTreeMap<String, String>,
+    /// Server name → installed skill name. Filled by `skills::sync`.
+    #[serde(skip)]
+    pub skills: BTreeMap<String, String>,
 }
 
 /// How to reach one downstream MCP server: a stdio child process (`command`)
@@ -68,6 +81,12 @@ pub struct ServerSpec {
     /// Tecnocrática account"). Shown in list_servers and appended to spawn
     /// failures so an unprovisioned server explains itself.
     pub setup_hint: Option<String>,
+    /// The server's skill — its name tag: a `SKILL.md` (or the directory holding
+    /// one) whose frontmatter `description` tells a session *when* to reach for
+    /// this server, before any schema is loaded. Every entry must have one;
+    /// unset means `<--directory>/SKILL.md` for a `uv run`-style command, else
+    /// `<extensions_dir>/<server>/SKILL.md`. Installed by dangler at every start.
+    pub skill: Option<PathBuf>,
 }
 
 /// How a server is reached, resolved from the spec once so the fleet does not

@@ -59,6 +59,10 @@ pub struct ServerStatus {
     pub identity: Option<String>,
     /// Provisioning instructions, from config.
     pub setup_hint: Option<String>,
+    /// The installed skill (name tag) that says when to use this server.
+    pub skill: Option<String>,
+    /// Set when the entry is not served: it carries no usable skill, and this says why.
+    pub disabled: Option<String>,
 }
 
 /// One `search_tools` match: a tool on some downstream server.
@@ -127,12 +131,16 @@ impl Fleet {
         }
     }
 
-    /// Look up a server's launch spec, erroring on names not in the config.
+    /// Look up a server's launch spec, erroring on names not in the config —
+    /// and saying so when the name is there but disabled for carrying no skill.
     fn spec(&self, name: &str) -> Result<&ServerSpec> {
         self.config
             .servers
             .get(name)
-            .ok_or_else(|| anyhow!("no server '{name}' in config"))
+            .ok_or_else(|| match self.config.disabled.get(name) {
+                Some(reason) => anyhow!("server '{name}' is {reason}"),
+                None => anyhow!("no server '{name}' in config"),
+            })
     }
 
     /// Effective idle timeout for a server: per-server override, else global,
@@ -156,11 +164,18 @@ impl Fleet {
             .and_then(|s| s.identity.clone())
     }
 
-    /// Status of every configured server, warm or cold.
+    /// The installed skill name for a server, if any.
+    pub fn skill_of(&self, name: &str) -> Option<String> {
+        self.config.skills.get(name).cloned()
+    }
+
+    /// Status of every configured server, warm or cold — and, after them, the
+    /// entries disabled for carrying no skill, so a caller sees why a name is missing.
     pub async fn statuses(&self) -> Vec<ServerStatus> {
         let children = self.children.lock().await;
         let cache = self.cache.lock().await;
-        self.config
+        let mut rows: Vec<ServerStatus> = self
+            .config
             .servers
             .iter()
             .map(|(name, spec)| ServerStatus {
@@ -169,8 +184,25 @@ impl Fleet {
                 cached_tools: cache.get(name).map(|t| t.len()),
                 identity: spec.identity.clone(),
                 setup_hint: spec.setup_hint.clone(),
+                skill: self.config.skills.get(name).cloned(),
+                disabled: None,
             })
-            .collect()
+            .collect();
+        rows.extend(
+            self.config
+                .disabled
+                .iter()
+                .map(|(name, reason)| ServerStatus {
+                    name: name.clone(),
+                    warm: false,
+                    cached_tools: cache.get(name).map(|t| t.len()),
+                    identity: None,
+                    setup_hint: None,
+                    skill: None,
+                    disabled: Some(reason.clone()),
+                }),
+        );
+        rows
     }
 
     /// Spawn the server if cold; mark it in-use and return a peer handle.
@@ -448,6 +480,7 @@ mod tests {
             idle_timeout_secs: secs,
             identity: None,
             setup_hint: None,
+            skill: None,
         }
     }
 
@@ -458,7 +491,11 @@ mod tests {
             .collect();
         Config {
             idle_timeout_secs: None,
+            extensions_dir: None,
+            skills_dir: None,
             servers,
+            disabled: Default::default(),
+            skills: Default::default(),
         }
     }
 
