@@ -296,17 +296,27 @@ SPEC_KEYS = ("prompt", "workflow", "width", "height", "steps", "negative", "stre
              "control_image", "seed", "seeds", "params", "loras", "name")
 
 
-def _spec_to_jobs(m: dict, index: int, many: bool, files: dict) -> list[dict]:
+def _spec_to_jobs(m: dict, index: int, many: bool, files: dict, catalog: dict | None = None) -> list[dict]:
     """One job spec → the gateway's job entries (one per seed).
 
     Uploads any control image into the shared `files` map, so several specs in
     one request can reference different drawings without colliding.
+
+    `catalog` maps a workflow to the parameters it declares. The tool's own
+    implicit parameters (prompt, seed, prefix, size…) go only to a workflow that
+    takes them, so utility workflows with no sampler (vectorize, alpha-cutout,
+    upscale) are callable here. Explicit `params` always pass: a typo still
+    fails loudly in the runner.
     """
-    if not m.get("prompt"):
+    declared = (catalog or {}).get(m.get("workflow") or DEFAULT_WORKFLOW)
+    takes = (lambda k: True) if declared is None else (lambda k: k in declared)
+    if takes("prompt") and not m.get("prompt"):
         raise GatewayError(f"job {index}: 'prompt' is required")
-    params = {k: m[k] for k in ("width", "height", "steps", "negative", "strength", "model") if m.get(k) is not None}
+    params = {k: m[k] for k in ("width", "height", "steps", "negative", "strength", "model")
+              if m.get(k) is not None and takes(k)}
     params.update(m.get("params") or {})
-    params["prompt"] = m["prompt"]
+    if takes("prompt"):
+        params["prompt"] = m["prompt"]
     inputs = {}
     if m.get("control_image"):
         src = Path(m["control_image"]).expanduser()
@@ -316,9 +326,17 @@ def _spec_to_jobs(m: dict, index: int, many: bool, files: dict) -> list[dict]:
         inputs["image"] = src.name
     seeds = m.get("seeds") or [m.get("seed", -1)]
     name = m.get("name") or (f"job{index:02d}" if many else "image")
+    def per_seed(s: int) -> dict:
+        p = dict(params)
+        if takes("seed"):
+            p["seed"] = s
+        if takes("prefix"):
+            p["prefix"] = f"{name}_s{s}" if s != -1 else name
+        return p
+
     return [{"name": f"{name}-s{s}" if len(seeds) > 1 else name,
              "workflow": m.get("workflow") or DEFAULT_WORKFLOW,
-             "params": dict(params, seed=s, prefix=f"{name}_s{s}" if s != -1 else name),
+             "params": per_seed(s),
              "inputs": inputs, "loras": m.get("loras") or []} for s in seeds]
 
 
@@ -336,9 +354,10 @@ def t_generate(a: dict) -> str:
     defaults = {k: a[k] for k in SPEC_KEYS if k in a}
     files: dict[str, str] = {}
     jobs: list[dict] = []
+    catalog = {w["workflow"]: set(w["params"]) for w in _call("/workflows")["workflows"]}
     for i, spec in enumerate(specs):
         merged = {**defaults, **{k: v for k, v in spec.items() if k in SPEC_KEYS}} if spec is not a else dict(a)
-        jobs += _spec_to_jobs(merged, i, len(specs) > 1, files)
+        jobs += _spec_to_jobs(merged, i, len(specs) > 1, files, catalog)
     res = _call("/jobs", {"jobs": jobs, "output_dir": a.get("output_dir"), "private": bool(a.get("private")), "files": files})
     return _report(_wait(res["id"], float(a.get("wait_seconds", 240))), a.get("save_to"))
 
@@ -377,14 +396,16 @@ TOOLS: dict[str, tuple[Any, types.Tool]] = {
                                                      "workflow, control_image, seed(s), negative, size, model, loras and "
                                                      "name; anything it omits falls back to the top-level value. Use this "
                                                      "for a study: one subject per spec, or one model per spec.",
-                     "items": {"type": "object", "required": ["prompt"], "properties": {
+                     "items": {"type": "object", "properties": {
                          "prompt": {"type": "string"}, "workflow": {"type": "string"}, "name": {"type": "string"},
                          "control_image": {"type": "string"}, "negative": {"type": "string"},
                          "seed": {"type": "integer"}, "seeds": {"type": "array", "items": {"type": "integer"}},
                          "width": {"type": "integer"}, "height": {"type": "integer"}, "steps": {"type": "integer"},
                          "strength": {"type": "number"}, "model": {"type": "string"},
                          "params": {"type": "object"}, "loras": {"type": "array", "items": {"type": "object"}}}}},
-            "prompt": {"type": "string", "description": "What to render, in full sentences. Required unless `jobs` is given."},
+            "prompt": {"type": "string", "description": "What to render, in full sentences. Required unless `jobs` is given, "
+                                                       "or the workflow takes no prompt (image/vectorize*.json, "
+                                                       "image/alpha-cutout.json, image/upscale-model.json)."},
             "workflow": {"type": "string", "description": f"From image_workflows. Default {DEFAULT_WORKFLOW}."},
             "width": {"type": "integer", "description": "Multiple of 16. Z-Image: 1024x1024, 832x1216, 1216x832, 1344x768."},
             "height": {"type": "integer"},

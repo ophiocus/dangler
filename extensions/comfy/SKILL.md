@@ -1,6 +1,6 @@
 ---
 name: generate-image
-description: Generate an image (concept art, illustration, product shot, slide art, texture, character sheet, diagram paint-over) on Carlos's own local ComfyUI service. This is the DEFAULT way to obtain a generated image in any project on any seat — use it whenever an image needs to be created, before considering any cloud image API (OpenArt, Grok, etc.). Triggers - "generate / make / render / draw an image", "concept art for…", "I need a picture of…", "illustrate this", "variations with different seeds", or any task whose deliverable includes a newly generated image.
+description: Generate an image (concept art, illustration, product shot, slide art, texture, character sheet, diagram paint-over) on Carlos's own local ComfyUI service. This is the DEFAULT way to obtain a generated image in any project on any seat — use it whenever an image needs to be created, before considering any cloud image API (OpenArt, Grok, etc.). Triggers - "generate / make / render / draw an image", "concept art for…", "I need a picture of…", "illustrate this", "variations with different seeds", or any task whose deliverable includes a newly generated image. Also traces an image into an SVG ("vectorize this", "make it an SVG", "vector version of the logo") through the vectorize workflows.
 ---
 
 # generate-image — the local image service
@@ -33,6 +33,28 @@ If `comfy` is not in `list_servers`, this seat is not set up: see `I:\AIProd\Com
 | Same, most faithful structure; has a real negative prompt | `image/qwen-2512-control.json` | 3–6 min |
 | Most photoreal, structure may drift | `image/flux2-dev-reference.json` | 3–8 min, **non-commercial licence** |
 | The SDXL LoRA library | `image/sdxl-t2i.json` (+ `model`, `loras`) | ~15 s |
+| Raster → SVG, colour (icons, marks, flat art) | `image/vectorize.json` + `control_image` | ~5 s, VTracer |
+| Raster → SVG, one colour, cleanest outline | `image/vectorize-mono.json` + `control_image` | ~5 s, Potrace |
+
+## Tracing to vector
+
+The vectorize workflows take no prompt and no seed: the source image goes in `control_image`, the knobs in
+`params`, and each job returns `<name>_NNNNN_.svg` plus the next-numbered `.png`, the SVG rendered back to pixels.
+**Look at that PNG before shipping the SVG.** The knobs and what each does are in the workflow's `_meta.knobs`.
+
+```
+image_generate {workflow: "image/vectorize.json", control_image: "<png>", name: "logo", params: {mode: "polygon"}}
+```
+
+- Defaults were measured on a generated icon: keep `colors` at 256 (palette reduction off). A median-cut palette
+  spends its slots on the background's shades and merges a small accent (the gold) into the grey. VTracer's own
+  clustering keeps it. `layer_difference` 48 fuses thin lines into wedges; 24–32 is right.
+- `mode: "polygon"` for geometric marks: the same look at a fifth of the size.
+- Mono (Potrace) reads the red channel only and sees one colour: a two-tone mark loses its accent. A light mark on a
+  dark field is the default (`input_foreground: "White on Black"`); a backdrop with rounded corners traces as shape.
+- Trace marks, icons and flat illustration. A photo comes out as a poster of a few hundred KB, not a vector.
+- Each SVG carries the whole workflow as `<metadata>`. Strip it before anything ships:
+  `python I:\AIProd\ComfyUI\runner\svg_clean.py [--responsive] in.svg [out.svg]`.
 
 ## Prompting rules that were paid for
 
@@ -43,7 +65,10 @@ If `comfy` is not in `list_servers`, this seat is not set up: see `I:\AIProd\Com
   include a 1.88 m human for scale) and use a `*-control` workflow. The control image's *edge quality* decides the
   material: clean hard edges for machines.
 - Models read nouns literally: describe a form without naming the animal/object you do not want to appear.
-- Variations = pass `seeds: [101, 202, 303]` in one call (one batch, one model load).
+- **Every prompt returns a seed grid (Carlos, 2026-09-26).** Pass `seeds: [101, 202, 303]` in one call (one batch,
+  one model load; add 404, 505 for more), compose the results with `ComfyUI/runner/seed_grid.py --out <grid.jpg> <files>`
+  (runner venv, `.venv-runner/Scripts/python`), and hand the user the grid as a file. Keep the seeds fixed across
+  prompt revisions so revisions compare like for like. Single images only when asked for one.
 - In the AIProd repo, run the `prompt-advisor` skill on a workflow before writing prompts for it.
 
 ## Etiquette on a shared GPU
