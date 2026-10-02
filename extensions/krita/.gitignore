@@ -1,0 +1,22 @@
+# --- secrets: never, ever ---
+client_secret*.json
+*token*.json
+*.pem
+.env
+.env.*
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+uv.lock.bak
+
+# --- the bridge's per-session token never lives in the repo (it lives in ~/.krita-mcp) ---
+bridge.token
+bridge.json

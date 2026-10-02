@@ -1,0 +1,12 @@
+<html><body>
+<h2>Krita MCP Bridge</h2>
+<p>Runs a small HTTP listener on <b>127.0.0.1</b> only, protected by a random bearer token minted
+per Krita session into <code>~/.krita-mcp/bridge.token</code>. The <code>krita-mcp</code> server
+(a dangler fleet extension) reads that token and the port from <code>~/.krita-mcp/bridge.json</code>
+and turns MCP tool calls into libkis calls on Krita's GUI thread.</p>
+<p>Every request runs with a deadline: if Krita is showing a modal dialog or is busy, the caller
+gets a <code>krita_busy</code> error instead of hanging.</p>
+<p>Log: <code>~/.krita-mcp/bridge.log</code>. Optional switches (files in <code>~/.krita-mcp</code>):
+<code>allow_exec</code> enables arbitrary Python (<code>run_python</code>), <code>any_action</code>
+lifts the QAction allow-list. Both are off by default.</p>
+</body></html>

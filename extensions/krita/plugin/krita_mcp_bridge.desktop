@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Service
+ServiceTypes=Krita/PythonPlugin
+X-KDE-Library=krita_mcp_bridge
+X-Python-2-Compatible=false
+X-Krita-Manual=Manual.html
+Name=Krita MCP Bridge
+Comment=Loopback bridge (token-protected, 127.0.0.1 only) that lets the krita-mcp server drive this Krita from a Claude session.
