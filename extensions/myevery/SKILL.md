@@ -33,7 +33,7 @@ the bearer stays in the header file and is never copied. Reach it through dangle
 - Events are durable and readable by every seat on the account: no secrets, no tokens, no
   private prompt text in an event body.
 - An auth error means this machine's header file is not filled; the server's `setup_hint`
-  names it. Check the service itself with `curl https://api.myevery.tecnocratica.com.co/healthz`
+  names it. Check the service itself with `curl https://api--myevery.tecnocratica.com.co/healthz`
   before suspecting the token.
 - The generated-image path between seats is not this server: it is the `comfy` server
   with `AIPROD_TRANSPORT=bus`, which uses the pipes underneath.

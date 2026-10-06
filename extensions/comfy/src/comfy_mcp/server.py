@@ -16,7 +16,7 @@ Environment (all optional — the server starts and lists its tools with none of
 Reaching the GPU seat from another machine — the myevery bus (no network route between the seats needed):
   AIPROD_TRANSPORT=bus       carry every gateway call over myevery's piped transport (rendezvous, nothing
                              stored on the bus) instead of HTTP straight to the gateway
-  MYEVERY_URL                the bus base URL, e.g. https://api.myevery.tecnocratica.com.co
+  MYEVERY_URL                the bus base URL, e.g. https://api--myevery.tecnocratica.com.co
   MYEVERY_HEADER_FILE        where the bus bearer lives (default ~/.dangler/myevery.headers, the same file
                              dangler's `myevery` fleet entry references) — read by reference, never copied.
                              Or MYEVERY_TOKEN. MYEVERY_MCP_JSON still reads it out of a Claude config
