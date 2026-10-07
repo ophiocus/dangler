@@ -80,6 +80,19 @@ MDB_MCP_CONNECTION_STRING = "mongodb+srv://user:pass@cluster.example.mongodb.net
 # # GODADDY_ENV = "ote"        # test environment instead of production
 # # GODADDY_READ_ONLY = "1"    # refuse every mutating tool
 
+# First-party extension: Cloudflare (extensions/cloudflare in this repo).
+# One scoped API token, by reference: point CLOUDFLARE_CREDENTIALS_FILE at a
+# file with a TOKEN=... line. Grant only the scopes the work needs. Origin CA
+# takes this same token; the old service-key header died 2026-09-30.
+# See extensions/cloudflare/README.md.
+# [servers.cloudflare]
+# command = "C:/path/to/dangler/target/release/dangler-cloudflare.exe"
+# identity = "your Cloudflare account"
+# setup_hint = "mint a scoped API token at dash.cloudflare.com/profile/api-tokens and write TOKEN=... into the file CLOUDFLARE_CREDENTIALS_FILE points at; check it with verify_token"
+# [servers.cloudflare.env]
+# CLOUDFLARE_CREDENTIALS_FILE = "C:/Users/me/.cloudflare/credentials"
+# # CLOUDFLARE_READ_ONLY = "1"   # refuse every mutating tool
+
 # First-party extension: Google Workspace (extensions/google in this repo).
 # Python rather than Rust, so it is run through uv rather than a built binary.
 # Secrets stay in ~/.gcp: the OAuth desktop client and the per-machine token.

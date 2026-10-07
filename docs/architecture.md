@@ -146,6 +146,7 @@ the Rust ones.
 
 | Path | Server | Language | Wraps |
 | --- | --- | --- | --- |
+| `extensions/cloudflare` | `dangler-cloudflare` | Rust | The Cloudflare v4 API: zones, DNS, cache purge, Origin CA certificates, plus a `raw_api` escape hatch. Replaces the vendor plugin's arbitrary-JS `execute` with a named surface behind one scoped token |
 | `extensions/godaddy` | `dangler-godaddy` | Rust | GoDaddy domains, DNS and subscriptions, plus a `raw_api` escape hatch for the long tail |
 | `extensions/google` | `gws-mcp` | Python, run by `uv` | Google Docs and Sheets read/write and Drive read-only, on your own OAuth desktop client |
 | `extensions/ytdl` | `dangler-ytdl` | Rust | A bundled yt-dlp / ffmpeg / deno toolkit: local video, MP3 and transcript capture |

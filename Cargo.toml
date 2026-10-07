@@ -10,7 +10,7 @@ keywords = ["mcp", "model-context-protocol", "gateway", "proxy"]
 categories = ["command-line-utilities"]
 
 [workspace]
-members = ["extensions/godaddy", "extensions/ytdl"]
+members = ["extensions/cloudflare", "extensions/godaddy", "extensions/ytdl"]
 
 [dependencies]
 anyhow = "1.0.104"
