@@ -51,10 +51,17 @@ Generate the CSR where the key must stay — on the origin host — and send onl
 `CERTIFICATE REQUEST` block. The tool refuses a payload containing a private key
 rather than forwarding it.
 
-**Tag purge is Enterprise.** `purge_cache` with `tags` returns an error on a Free
-plan. The fleet's zones are Free, so tag-based purge from here will fail; the
-server-side purge credential on the VPS is a different thing with a different
-scope.
+**Tag purge works on Free, but only on what was tagged.** Every purge method —
+tags, hosts, prefixes, URLs, everything — has been available on every plan since
+April 2025, under per-account rate limits. Older guides that call tag purge
+Enterprise-only are stale. The real constraint is upstream: a tag only reaches
+responses the origin sent with a `Cache-Tag` header through a proxied name.
+Purging a tag nothing carries succeeds and does nothing, which reads as a broken
+purge and is not. Check a response's headers before blaming the purge.
+
+The server-side purge credential that Drupal uses on the VPS is a different
+token with a different scope, living on the host that needs it. Do not reuse
+this extension's token for it.
 
 ## Credentials
 

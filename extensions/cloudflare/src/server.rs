@@ -95,7 +95,8 @@ struct PurgeArgs {
     everything: bool,
     #[serde(default)]
     files: Vec<String>,
-    /// Cache-tag purge. Enterprise-only on Cloudflare's side.
+    /// Cache-tag purge. Available on every plan since 2025-04; only matches
+    /// responses the origin tagged with a `Cache-Tag` header, on proxied names.
     #[serde(default)]
     tags: Vec<String>,
     #[serde(default)]
@@ -341,8 +342,10 @@ impl Cloudflare {
                 TOOL_PURGE,
                 "Purge the edge cache for a zone. Give exactly one of: everything, files, \
                  tags, hosts, prefixes. 'everything' discards the whole zone's cache and makes \
-                 the next requests all miss, so prefer the narrow forms. Tag purge is an \
-                 Enterprise feature and returns an error on a Free plan.",
+                 the next requests all miss, so prefer the narrow forms. Every method, tags \
+                 included, works on every plan, under per-account rate limits. Tag purge only \
+                 reaches responses the origin sent with a Cache-Tag header through a proxied \
+                 name — purging a tag nothing carries succeeds and does nothing.",
                 schema(json!({
                     "type": "object",
                     "properties": {
