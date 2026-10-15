@@ -152,6 +152,7 @@ the Rust ones.
 | `extensions/ytdl` | `dangler-ytdl` | Rust | A bundled yt-dlp / ffmpeg / deno toolkit: local video, MP3 and transcript capture |
 | `extensions/comfy` | `comfy-mcp` | Python, run by `uv` | The AIProd image gateway: generated images from the one local ComfyUI service, identical tools on the GPU seat and on remote seats |
 | `extensions/myevery` | — (hosted, `url`) | none — a name tag only | The myevery bus; the folder exists so the wrapper carries its `SKILL.md` like every other entry |
+| `extensions/tinyfab` | `tinyfab --mcp` (code in `I:\tinyfab`) | none here — a name tag only | TinyFab's catalogue of owned Fab listings: search by licence / vendor / category, per-pack metadata, research references. Release binary only |
 
 Two concessions worth knowing: `extensions/google` needs `uv` on PATH and a
 one-time `gws-mcp auth` per machine, and `extensions/ytdl` ships no toolchain at
