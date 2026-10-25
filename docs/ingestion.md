@@ -96,3 +96,18 @@ The first HTTP ingestion, kept as the worked example of the five gates.
 | 3 · Parity | Through `call_tool` against the new binary: 16 tools dangled by `load_server`, `list_seats` and `list_nodes` read, `post_event` written and read back by `query_events` (seq 29). |
 | 4 · Retire | `claude mcp remove myevery -s user`; `I:\myevery\.mcp.json` deleted; `.mcp.json.example` deleted and the README's "Connecting a seat" section inverted to the dangler route; `docs/PRODUCT.md`'s onboarding item now writes a fleet entry and is told never to write a `.mcp.json`. Two consumers read the bearer out of the retired registration and were repointed at the header file: the `comfy` extension's bus transport and the AIProd gateway's `bus.json` (`token_from`). |
 | 5 · Assurance | `python scripts/mcp_census.py --quiet-skips` reports no ticket for myevery. It still exits 1 for the other open tickets on this machine, which is the tool working, not a failure of this ingestion. |
+
+## Ingestion record — `unreal` (2026-10-24, Desky)
+
+Epic's first-party Unreal MCP server, the first `WRAP` that wraps a vendor's own server. It
+is `WRAP` rather than `LIST` for lifecycle and identity, not schema size: every project
+registered the same `127.0.0.1:8000/mcp`, so a client talked to whichever editor bound the
+port first, and a closed editor stayed failed for the whole session.
+
+| Gate | What happened |
+|---|---|
+| 1 · Roster | The UE canon (`D:\UE5_claude`, `WORKFLOW.md` §3, `PUNCHLIST` #42) named the extension `unreal` before any code. |
+| 2 · Build | `extensions/unreal` (Python, `uv`): one port per project with the owner proved from the listening process's command line, detached launch from the pinned engine build, condensed toolset descriptions, serialised calls, `UNREAL_READ_ONLY`. Starts and lists its six tools with nothing configured. No secret: Epic's server has no auth. |
+| 3 · Parity | Through `call_tool` on a fresh `dangler.exe` against UE 5.8.2 editors of `Sandbox`: `unreal_launch` (port up 19 s, 70 toolsets by 38 s), `unreal_toolsets` (70), `unreal_describe` condensed and per-tool, `unreal_call` read (`get_current_level`), a reversible write (spawn a point light, find it, tag it, read the tag and transform, remove it, find nothing), a wrong argument returning Epic's schema as `isError`, `unreal_skills`. Then the same editor opened the old way (`-ModelContextProtocolStartServer`, so `:8000`): the old route (a client straight at `:8000/mcp`) and dangler returned the same `get_current_level` and the same 70 toolsets; dangler refused a project whose editor was not the one on `:8000`, and a second `unreal_launch` started nothing. |
+| 4 · Retire | **Open — each file on the owner's word, per repository.** Registrations: `I:/moar` (+2 worktree copies), `I:/discarded`, `I:/ue5-skeleton`, `F:/moarvibe/games/moar_1/fps_1`, `F:/Unreal Projects/Sandbox` (no git; a delete there is final). What would put them back: `ue5-skeleton`'s `retrofit.manifest.json` component `mcp-config` (pushes `.mcp.json` into every game), its `tools/doctor.py` check (WARNs when `.mcp.json` is absent — to invert), `docs/MCP.md`, `scripts/templates/game_CLAUDE.md`, `tools/REGISTRY.md`; `lore-bible-skeleton`'s `.mcp.json.example` + `scripts/new_project.py` + `BOOTSTRAP.md`; `synthetrix`'s untracked `app/templates/lore-bible/.mcp.json.example` + `app/src/new_ip.rs`; Epic's `ModelContextProtocol.GenerateClientConfig` (documented in the extension's README as the thing not to run). |
+| 5 · Assurance | Open until gate 4 lands. The census now also reads `.mcp.json.example`, because a ticket closed in every project reopens with the next mint while its template still registers the service — that is how the two stamper templates above showed up. |

@@ -6,8 +6,10 @@ found in a project is therefore not configuration, it is an ingestion ticket: it
 target service should be wrapped by dangler and the file should then stop registering it.
 
 This script is the dumb half of that rule. It walks the dev drives, reads every
-`.mcp.json`, compares against the live fleet in ~/.dangler/dangler.toml, and prints
-one verdict per registration:
+`.mcp.json` — and every `.mcp.json.example`, the template a stamper renames into each
+project it mints, because a ticket closed in every project reopens with the next mint
+while its template still registers the service — compares against the live fleet in
+~/.dangler/dangler.toml, and prints one verdict per registration:
 
     DELETE  the target is retired; remove the entry
     REMOVE  the target is already served by a dangler fleet entry; remove the entry
@@ -44,6 +46,9 @@ PRUNE = {"node_modules", ".git", "$RECYCLE.BIN", "System Volume Information", "A
          ".venv", "venv", "site-packages", "target", "Windows", "Program Files",
          "Program Files (x86)"}
 
+# A registration, and the template a stamper renames into a registration in every new project.
+MCP_FILES = (".mcp.json", ".mcp.json.example")
+
 # Path fragments that are never ours to ingest. Extend with --skip or in ~/.dangler/census.skip.
 DEFAULT_SKIP = ["/.claude/plugins/", "/claude-plugins-official/"]
 
@@ -75,13 +80,14 @@ def find_files(roots: list[str], max_depth: int):
             dirs[:] = [d for d in dirs if d not in PRUNE and not d.startswith("_PURGE")]
             if depth >= max_depth:
                 dirs[:] = []
-            if ".mcp.json" in files:
-                yield os.path.join(cur, ".mcp.json").replace("\\", "/")
+            for name in MCP_FILES:
+                if name in files:
+                    yield os.path.join(cur, name).replace("\\", "/")
 
 
 def git_tracked(path: str) -> bool:
     try:
-        r = subprocess.run(["git", "-C", os.path.dirname(path), "ls-files", "--error-unmatch", ".mcp.json"],
+        r = subprocess.run(["git", "-C", os.path.dirname(path), "ls-files", "--error-unmatch", os.path.basename(path)],
                            capture_output=True, text=True, timeout=10)
         return r.returncode == 0
     except Exception:
@@ -195,7 +201,9 @@ def main() -> int:
         if skipped and args.quiet_skips:
             continue
         client = "(client," in path
+        template = path.endswith(".example")
         tags = ", ".join(t for t in ("client registration" if client else ("tracked" if tracked else "untracked"),
+                                     "template, stamped into every new project" if template else "",
                                      "worktree copy, follows its parent" if worktree else "") if t)
         print(f"{path}  ({tags})" if not client else f"{path}")
         for name, server in servers.items():

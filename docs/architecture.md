@@ -153,6 +153,7 @@ the Rust ones.
 | `extensions/comfy` | `comfy-mcp` | Python, run by `uv` | The AIProd image gateway: generated images from the one local ComfyUI service, identical tools on the GPU seat and on remote seats |
 | `extensions/myevery` | — (hosted, `url`) | none — a name tag only | The myevery bus; the folder exists so the wrapper carries its `SKILL.md` like every other entry |
 | `extensions/tinyfab` | `tinyfab --mcp` (code in `I:\tinyfab`) | none here — a name tag only | TinyFab's catalogue of owned Fab listings: search by licence / vendor / category, per-pack metadata, research references. Release binary only |
+| `extensions/unreal` | `dangler-unreal` | Python, run by `uv` | Epic's Unreal MCP server inside each UE 5.8 editor: one port per project with the owner proved from the listening process, detached launch from the pinned engine build, condensed toolset descriptions, serialised calls. Epic's server has no auth, so there is no secret to hold |
 
 Two concessions worth knowing: `extensions/google` needs `uv` on PATH and a
 one-time `gws-mcp auth` per machine, and `extensions/ytdl` ships no toolchain at
