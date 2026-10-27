@@ -5,7 +5,7 @@ Why this exists: the claude.ai Gmail connector stores every link in a draft as a
 Python's `email` package and handed to `users.drafts.create` as raw RFC 822, so
 what is stored is exactly what was given.
 
-Drafts only. There is deliberately no send function: sending stays the user's act.
+Sending is a separate tool that sends an existing draft only (server.gmail_draft_send).
 """
 from __future__ import annotations
 

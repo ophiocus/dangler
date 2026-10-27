@@ -160,7 +160,7 @@ dangler — each is a plain stdio MCP server that happens to live here.
 | Extension | Server | What it fronts |
 |---|---|---|
 | [`extensions/godaddy`](extensions/godaddy) | `dangler-godaddy` | GoDaddy REST APIs: domain portfolio, DNS record CRUD, subscriptions, availability — plus a `raw_api` escape hatch reaching every other endpoint (certificates, orders, agreements, aftermarket, …) |
-| [`extensions/google`](extensions/google) | `gws-mcp` | Google Docs and Sheets with full read/write, Drive read-only, and Gmail drafts with links stored exactly as given (no send tool), on your own OAuth desktop client — files edited in place rather than recreated |
+| [`extensions/google`](extensions/google) | `gws-mcp` | Google Docs and Sheets with full read/write, Drive read-only, and Gmail drafts with links stored exactly as given (plus sending a checked draft on the owner's word), on your own OAuth desktop client — files edited in place rather than recreated |
 | [`extensions/ytdl`](extensions/ytdl) | `dangler-ytdl` | A bundled yt-dlp / ffmpeg / deno toolkit for local personal archiving: video, MP3 audio, transcripts |
 | [`extensions/comfy`](extensions/comfy) | `comfy-mcp` | One local ComfyUI service through the AIProd image gateway — identical tools on the GPU seat and on a remote seat, which reaches it over an event bus's piped transport |
 | [`extensions/myevery`](extensions/myevery) | *(hosted `url` entry)* | No code — the folder carries the bus's `SKILL.md`, because a wrapper wears a name tag like every other entry |

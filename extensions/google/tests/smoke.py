@@ -63,7 +63,7 @@ p.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized
 tools = rpc("tools/list")["result"]["tools"]
 print(f"tools/list: {len(tools)} -> " + ", ".join(t["name"] for t in tools))
 check(len(tools) >= 23, "expected >= 23 tools")
-check(not any("send" in t["name"] for t in tools), "no send tool may exist")
+check([t["name"] for t in tools if "send" in t["name"]] == ["gmail_draft_send"], "the only send tool sends a draft")
 
 found = call("drive_search", query="mimeType = 'application/vnd.google-apps.spreadsheet'", page_size=3)
 files = json.loads(found) if found.startswith("[") else []

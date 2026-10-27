@@ -5,7 +5,7 @@ Design rules
 - Scopes are the minimum that gives full Docs/Sheets CRUD without any Drive
   write scope: documents, spreadsheets, drive.readonly (search + export).
   Gmail adds gmail.compose (create/update/read/delete drafts — and, by Google's
-  definition, send; this server exposes no send tool) and gmail.readonly, which
+  definition, send: gmail_draft_send sends an existing draft only) and gmail.readonly, which
   only the reply lookup uses: gmail.compose cannot read the message a draft
   answers, and its Message-ID/threadId are what put the draft in the thread.
 - Credentials load with the scopes the token was granted, so a token minted
