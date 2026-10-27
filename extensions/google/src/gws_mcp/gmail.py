@@ -64,12 +64,11 @@ def build_message(
 ) -> EmailMessage:
     """Build the draft as an EmailMessage.
 
-    text only -> text/plain; html only -> text/html; both -> multipart/alternative.
+    text only -> text/plain; html only -> text/html; both -> multipart/alternative;
+    neither -> an empty text/plain body (a blank draft, or attachments only).
     Attachments wrap the body in multipart/mixed. Everything is UTF-8; bodies are
     never rewritten, so links stay exactly as given.
     """
-    if not text and not html:
-        raise ValueError("give a body: `text`, `html`, or both")
     msg = EmailMessage(policy=policy.SMTP)
     for name, val in (("To", _addr(to)), ("Cc", _addr(cc)), ("Bcc", _addr(bcc))):
         if val:
@@ -84,8 +83,10 @@ def build_message(
         msg.set_content(text, subtype="plain", charset="utf-8")
         if html:
             msg.add_alternative(html, subtype="html", charset="utf-8")
-    else:
+    elif html:
         msg.set_content(html, subtype="html", charset="utf-8")
+    else:
+        msg.set_content("", subtype="plain", charset="utf-8")
 
     for path in attachments or []:
         p = Path(path).expanduser()

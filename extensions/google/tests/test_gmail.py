@@ -48,8 +48,10 @@ class BuildMessage(unittest.TestCase):
     def test_single_part_bodies(self):
         self.assertEqual(parse(gmail.build_message(to="a@x.co", text="t")).get_content_type(), "text/plain")
         self.assertEqual(parse(gmail.build_message(to="a@x.co", html="<b>h</b>")).get_content_type(), "text/html")
-        with self.assertRaises(ValueError):
-            gmail.build_message(to="a@x.co")
+        blank = parse(gmail.build_message())
+        self.assertEqual(blank.get_content_type(), "text/plain")
+        self.assertEqual(blank.get_content().strip(), "")
+        self.assertIsNone(blank["To"])
 
     def test_addresses(self):
         m = parse(gmail.build_message(to=["a@x.co", "Bé <b@x.co>"], cc="c@x.co", bcc=["d@x.co"], text="t"))
@@ -76,6 +78,14 @@ class BuildMessage(unittest.TestCase):
         text, html = bodies(m)
         self.assertIn(LONG, text)
         self.assertIn(LONG, html)
+
+    def test_attachment_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            cv = Path(d, "cv.pdf")
+            cv.write_bytes(b"%PDF")
+            m = parse(gmail.build_message(attachments=[str(cv)]))
+        self.assertEqual(m.get_content_type(), "multipart/mixed")
+        self.assertEqual([p.get_filename() for p in m.iter_attachments()], ["cv.pdf"])
 
     def test_missing_attachment(self):
         with self.assertRaises(FileNotFoundError):
