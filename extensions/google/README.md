@@ -79,7 +79,15 @@ The same client JSON works on every machine; only the token is per machine.
   `csantanad@gmail.com` and `tecnocraticaservices@gmail.com`; *Publish app*
   greyed out ("you must complete your configuration on the Branding page");
   Branding says "Verification is not required since your app is in Testing
-  status". The Gmail API was not yet enabled that day.
+  status". The Gmail API was off; it was enabled the same day.
+- Seen at consent on 2026-10-27, adding the Gmail scopes to that app: an
+  account chooser, then **"Google hasn't verified this app — You've been given
+  access to an app that's currently being tested. You should only continue if
+  you know the developer that invited you."** (*Back to safety* / *Continue*),
+  then "carlos-mcp wants additional access to your Google Account" with one
+  checkbox per scope ("View your email messages and settings", "Manage drafts
+  and send emails", Docs, Sheets), all pre-ticked. Leave them ticked: an
+  unticked scope is simply not granted, and `doctor` reports it missing.
 
 ### Adding a scope to an existing token
 
