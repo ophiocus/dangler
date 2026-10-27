@@ -101,7 +101,7 @@ MDB_MCP_CONNECTION_STRING = "mongodb+srv://user:pass@cluster.example.mongodb.net
 # [servers.google]
 # command = "uv"
 # args = ["run", "--directory", "C:/path/to/dangler/extensions/google", "gws-mcp"]
-# identity = "your Google account (Docs + Sheets read/write, Drive read-only)"
+# identity = "your Google account (Docs + Sheets read/write, Drive read-only, Gmail drafts — no send)"
 # setup_hint = "put an OAuth desktop client at ~/.gcp/client_secret.json, then run `uv run --directory <repo>/extensions/google gws-mcp auth` and approve in the browser"
 
 # First-party extension: local YouTube archiving (extensions/ytdl in this repo).

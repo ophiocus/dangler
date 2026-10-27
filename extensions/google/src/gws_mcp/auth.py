@@ -4,6 +4,13 @@ Design rules
 - Uses YOUR OAuth Desktop client (client_secret.json) — the app is you.
 - Scopes are the minimum that gives full Docs/Sheets CRUD without any Drive
   write scope: documents, spreadsheets, drive.readonly (search + export).
+  Gmail adds gmail.compose (create/update/read/delete drafts — and, by Google's
+  definition, send; this server exposes no send tool) and gmail.readonly, which
+  only the reply lookup uses: gmail.compose cannot read the message a draft
+  answers, and its Message-ID/threadId are what put the draft in the thread.
+- Credentials load with the scopes the token was granted, so a token minted
+  before a scope was added keeps working for the tools it covers; tools that
+  need a newer scope call `require()` and ask for `gws-mcp auth` again.
 - `gws-mcp auth` is an explicit, blocking, standalone flow (loopback server on
   an ephemeral port) — there is no "auth on first tool call", so the
   dead-callback problem cannot happen. Tools fail fast with a clear message if
@@ -26,7 +33,12 @@ SCOPES = [
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.readonly",
 ]
+
+GMAIL_COMPOSE = "https://www.googleapis.com/auth/gmail.compose"
+GMAIL_READONLY = "https://www.googleapis.com/auth/gmail.readonly"
 
 DEFAULT_DIR = Path(os.environ.get("GWS_MCP_DIR", str(Path.home() / ".gcp")))
 CLIENT_SECRET = Path(os.environ.get("GWS_MCP_CLIENT_SECRET", str(DEFAULT_DIR / "client_secret.json")))
@@ -47,7 +59,8 @@ def load_credentials() -> Credentials:
             f"No Google token at {TOKEN_FILE}. Run `gws-mcp auth` once on this machine "
             f"(uses {CLIENT_SECRET}), approve in the browser, then retry."
         )
-    creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
+    # No scopes argument: use what the token was granted (see module docstring).
+    creds = Credentials.from_authorized_user_file(str(TOKEN_FILE))
     if creds.valid:
         return creds
     if creds.expired and creds.refresh_token:
@@ -59,6 +72,24 @@ def load_credentials() -> Credentials:
         "Google token is invalid and cannot be refreshed (revoked, or the OAuth app is in "
         "'Testing' status and the 7-day refresh-token limit hit). Run `gws-mcp auth` again."
     )
+
+
+def granted_scopes() -> list[str]:
+    """Scopes recorded in the token file (no secret is read out of it)."""
+    if not TOKEN_FILE.exists():
+        return []
+    return list(json.loads(TOKEN_FILE.read_text(encoding="utf-8")).get("scopes") or [])
+
+
+def require(*scopes: str) -> None:
+    """Raise a clear RuntimeError if the token lacks any of `scopes`."""
+    missing = [s for s in scopes if s not in granted_scopes()]
+    if missing:
+        short = ", ".join(s.rsplit("/", 1)[-1] for s in missing)
+        raise RuntimeError(
+            f"The Google token at {TOKEN_FILE} was granted before {short} was added. "
+            "Run `gws-mcp auth` again on this machine and approve the new access, then retry."
+        )
 
 
 def run_auth(open_browser: bool = True, port: int = 0) -> str:

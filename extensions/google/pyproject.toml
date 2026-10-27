@@ -1,7 +1,7 @@
 [project]
 name = "gws-mcp"
 version = "0.1.0"
-description = "Minimal, self-owned MCP server for Google Docs + Sheets (full CRUD) and read-only Drive. No third-party server code: only Anthropic's MCP SDK and Google's official client libraries."
+description = "Minimal, self-owned MCP server for Google Docs + Sheets (full CRUD), read-only Drive and Gmail drafts (no send). No third-party server code: only Anthropic's MCP SDK and Google's official client libraries."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

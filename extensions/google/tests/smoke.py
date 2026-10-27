@@ -1,6 +1,6 @@
 """End-to-end stdio smoke test for gws-mcp (needs a valid token: `gws-mcp auth`).
 
-  uv run python tests/smoke.py [--write]
+  uv run python tests/smoke.py [--write] [--gmail]
 
 Without --write: initialize, tools/list, drive_search, sheets_info/read on the
 first spreadsheet found (read-only).
@@ -8,10 +8,15 @@ With --write: additionally creates a throwaway spreadsheet "gws-mcp smoke
 (safe to delete)", writes/appends/reads/clears cells, and creates+edits a
 throwaway Doc — proving the CRUD path. It cannot delete them (no Drive write
 scope by design); trash them by hand.
+With --gmail: creates a draft to csantanad@gmail.com carrying a link and an
+attachment, reads it back (link stored unwrapped in both parts, no
+google.com/url redirect), replaces it, and deletes it. Nothing is sent.
+Offline MIME tests: `uv run python -m unittest discover -s tests -v`.
 """
 import json, subprocess, sys, threading, time, os
 
 WRITE = "--write" in sys.argv
+GMAIL = "--gmail" in sys.argv
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 cmd = ["uv", "run", "--directory", ROOT, "gws-mcp"]
 p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -57,7 +62,8 @@ rpc("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}, "clientI
 p.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n"); p.stdin.flush()
 tools = rpc("tools/list")["result"]["tools"]
 print(f"tools/list: {len(tools)} -> " + ", ".join(t["name"] for t in tools))
-check(len(tools) >= 19, "expected >= 19 tools")
+check(len(tools) >= 23, "expected >= 23 tools")
+check(not any("send" in t["name"] for t in tools), "no send tool may exist")
 
 found = call("drive_search", query="mimeType = 'application/vnd.google-apps.spreadsheet'", page_size=3)
 files = json.loads(found) if found.startswith("[") else []
@@ -96,6 +102,31 @@ if WRITE:
     try: os.remove(out)
     except OSError: pass
     print(f"\nthrowaway files to trash by hand: spreadsheet {ss}, doc {did}")
+
+if GMAIL:
+    link = "https://oidoenvivo.com/ciudad/bogota"
+    att = os.path.join(ROOT, "tests", "_smoke_attachment.txt")
+    with open(att, "w", encoding="utf-8") as fh:
+        fh.write("adjunto de prueba\n")
+    created = call("gmail_draft_create", to="csantanad@gmail.com", subject="gws-mcp smoke (borrador, se borra solo)",
+                   text=f"Prueba de enlace: {link}\n", html=f'<p>Prueba de <a href="{link}">enlace</a>: {link}</p>',
+                   attachments=[att])
+    did = json.loads(created)["draft_id"] if created.startswith("{") else None
+    check(bool(did), "gmail_draft_create id")
+    if did:
+        got = json.loads(call("gmail_draft_get", draft_id=did))
+        check(link in got["text"] and f'href="{link}"' in got["html"], "link stored unwrapped in both parts")
+        check(got["redirect_wrapped_links"] == [], f"no google.com/url redirects: {got['redirect_wrapped_links']}")
+        check([a["filename"] for a in got["attachments"]] == ["_smoke_attachment.txt"], f"attachment: {got['attachments']}")
+        call("gmail_draft_update", draft_id=did, to="csantanad@gmail.com", subject="gws-mcp smoke (actualizado)",
+             html=f'<a href="{link}">solo html</a>')
+        got = json.loads(call("gmail_draft_get", draft_id=did))
+        check(got["headers"].get("Subject") == "gws-mcp smoke (actualizado)" and not got["attachments"], "update replaced the draft")
+        check(f'href="{link}"' in got["html"] and got["redirect_wrapped_links"] == [], "link unwrapped after update")
+        call("gmail_draft_delete", draft_id=did)
+        check(call("gmail_draft_get", draft_id=did).startswith("Google API error 404"), "draft gone after delete")
+    try: os.remove(att)
+    except OSError: pass
 
 p.kill()
 print("\nRESULT:", "PASS" if fails == 0 else f"{fails} FAILURE(S)")

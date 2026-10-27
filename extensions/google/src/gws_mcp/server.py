@@ -1,4 +1,4 @@
-"""gws-mcp server — Google Docs + Sheets CRUD, Drive read-only. stdio transport.
+"""gws-mcp server — Google Docs + Sheets CRUD, Drive read-only, Gmail drafts (no send). stdio transport.
 
 CLI:
   gws-mcp            run the MCP server (stdio)
@@ -9,6 +9,8 @@ CLI:
 """
 from __future__ import annotations
 
+import base64
+import io
 import json
 import sys
 from functools import lru_cache
@@ -17,15 +19,16 @@ from typing import Any
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaIoBaseDownload
+from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from mcp.server.fastmcp import FastMCP
 
-from . import auth
+from . import auth, gmail
 
 mcp = FastMCP(
     "gws-mcp",
     instructions=(
-        "Google Docs and Sheets with full read/write, Google Drive read-only. "
+        "Google Docs and Sheets with full read/write, Google Drive read-only, Gmail drafts "
+        "(create/update/get/delete — there is no send; sending is the user's act). "
         "Edit existing files IN PLACE by id (never recreate to iterate). "
         "If a tool reports a missing/invalid token, tell the user to run `gws-mcp auth`."
     ),
@@ -368,6 +371,128 @@ def drive_get(file_id: str) -> str:
         return _err(e)
 
 
+# ----------------------------------------------------------------- Gmail (drafts only, no send)
+# Raw messages above this size go up as a media upload instead of inline `raw`.
+_INLINE_RAW_LIMIT = 4_000_000
+
+
+def _gmail():
+    auth.require(auth.GMAIL_COMPOSE)
+    return _svc("gmail", "v1")
+
+
+def _draft_message(
+    to, cc, bcc, subject, text, html, attachments, reply_to_message_id
+) -> tuple[bytes, str | None]:
+    """Build the RFC 822 bytes (looking up the original for a reply) and the threadId to file it in."""
+    thread_id = in_reply_to = references = None
+    if reply_to_message_id:
+        auth.require(auth.GMAIL_READONLY)
+        orig = _gmail().users().messages().get(
+            userId="me", id=reply_to_message_id, format="metadata", metadataHeaders=gmail.REPLY_HEADERS
+        ).execute()
+        ctx = gmail.reply_context(orig.get("payload", {}).get("headers", []))
+        thread_id = orig.get("threadId")
+        in_reply_to, references = ctx["in_reply_to"] or None, ctx["references"] or None
+        subject = subject or ctx["subject"]
+        to = to or ctx["reply_address"]
+    msg = gmail.build_message(
+        to=to, cc=cc, bcc=bcc, subject=subject or "", text=text, html=html,
+        attachments=attachments, in_reply_to=in_reply_to, references=references,
+    )
+    return msg.as_bytes(), thread_id
+
+
+def _draft_body(raw: bytes, thread_id: str | None, draft_id: str | None = None) -> tuple[dict, Any]:
+    """Request body + optional media upload for drafts.create / drafts.update."""
+    message: dict[str, Any] = {"threadId": thread_id} if thread_id else {}
+    media = None
+    if len(raw) > _INLINE_RAW_LIMIT:
+        media = MediaIoBaseUpload(io.BytesIO(raw), mimetype="message/rfc822", resumable=True)
+    else:
+        message["raw"] = base64.urlsafe_b64encode(raw).decode("ascii")
+    body: dict[str, Any] = {"message": message}
+    if draft_id:
+        body["id"] = draft_id
+    return body, media
+
+
+def _draft_result(r: dict) -> str:
+    m = r.get("message", {})
+    return json.dumps({"draft_id": r.get("id"), "message_id": m.get("id"), "thread_id": m.get("threadId")})
+
+
+@mcp.tool()
+def gmail_draft_create(
+    subject: str = "",
+    to: str | list[str] | None = None,
+    cc: str | list[str] | None = None,
+    bcc: str | list[str] | None = None,
+    text: str | None = None,
+    html: str | None = None,
+    attachments: list[str] | None = None,
+    reply_to_message_id: str | None = None,
+) -> str:
+    """Create a Gmail DRAFT (never sends). Body: `text` and/or `html` (both -> multipart/alternative); links are stored exactly as given.
+    `attachments`: local file paths, read by the server. `reply_to_message_id`: Gmail message id to answer — threads the draft,
+    sets In-Reply-To/References, defaults subject to "Re: <original>" and `to` to the original's Reply-To/From.
+    Returns JSON {draft_id, message_id, thread_id}."""
+    try:
+        raw, thread_id = _draft_message(to, cc, bcc, subject, text, html, attachments, reply_to_message_id)
+        body, media = _draft_body(raw, thread_id)
+        r = _gmail().users().drafts().create(userId="me", body=body, media_body=media).execute()
+        return _draft_result(r)
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
+def gmail_draft_update(
+    draft_id: str,
+    subject: str = "",
+    to: str | list[str] | None = None,
+    cc: str | list[str] | None = None,
+    bcc: str | list[str] | None = None,
+    text: str | None = None,
+    html: str | None = None,
+    attachments: list[str] | None = None,
+    reply_to_message_id: str | None = None,
+) -> str:
+    """Replace a Gmail draft's whole content by draft id (same arguments as gmail_draft_create; nothing is kept from the old version).
+    Returns JSON {draft_id, message_id, thread_id} — the message id changes on every update."""
+    try:
+        raw, thread_id = _draft_message(to, cc, bcc, subject, text, html, attachments, reply_to_message_id)
+        body, media = _draft_body(raw, thread_id, draft_id)
+        r = _gmail().users().drafts().update(userId="me", id=draft_id, body=body, media_body=media).execute()
+        return _draft_result(r)
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
+def gmail_draft_get(draft_id: str) -> str:
+    """Read a Gmail draft back as stored: headers, text and html bodies, attachment names, every link found, and any
+    link stored as a google.com/url redirect (should be empty). Use it to verify a draft before the user sends it."""
+    try:
+        r = _gmail().users().drafts().get(userId="me", id=draft_id, format="raw").execute()
+        m = r.get("message", {})
+        out = {"draft_id": r.get("id"), "message_id": m.get("id"), "thread_id": m.get("threadId")}
+        out.update(gmail.read_raw(m.get("raw", "")))
+        return json.dumps(out, ensure_ascii=False)
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
+def gmail_draft_delete(draft_id: str) -> str:
+    """Delete a Gmail draft by id (permanent: drafts do not go to Trash). Only for drafts this workflow created."""
+    try:
+        _gmail().users().drafts().delete(userId="me", id=draft_id).execute()
+        return f"deleted draft {draft_id}"
+    except Exception as e:
+        return _err(e)
+
+
 # ----------------------------------------------------------------- CLI
 def _doctor() -> int:
     ok = True
@@ -375,11 +500,19 @@ def _doctor() -> int:
     print(f"token file:    {auth.TOKEN_FILE} -> {'present' if auth.TOKEN_FILE.exists() else 'missing (run: gws-mcp auth)'}")
     print(f"scopes:        {', '.join(s.rsplit('/', 1)[-1] for s in auth.SCOPES)}")
     if auth.TOKEN_FILE.exists():
+        missing = [s.rsplit("/", 1)[-1] for s in auth.SCOPES if s not in auth.granted_scopes()]
+        if missing:
+            ok = False
+            print(f"PROBLEM: token lacks {', '.join(missing)} (run: gws-mcp auth)")
         try:
             print(f"authorized as: {auth.whoami()}")
-            for name, ver in (("docs", "v1"), ("sheets", "v4")):
+            for name, ver in (("docs", "v1"), ("sheets", "v4"), ("gmail", "v1")):
                 build(name, ver, credentials=auth.load_credentials(), cache_discovery=False)
                 print(f"api {name} {ver}: reachable")
+            if auth.GMAIL_COMPOSE in auth.granted_scopes():
+                # A real call: proves the Gmail API is enabled in the OAuth client's project.
+                prof = _gmail().users().getProfile(userId="me").execute()
+                print(f"gmail mailbox: {prof.get('emailAddress')}")
         except Exception as e:
             ok = False
             print(f"PROBLEM: {_err(e)}")
