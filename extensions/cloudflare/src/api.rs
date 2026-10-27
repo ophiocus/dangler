@@ -38,28 +38,32 @@ fn load_token() -> Result<String> {
         return Ok(tok);
     }
     if let Ok(path) = std::env::var("CLOUDFLARE_CREDENTIALS_FILE") {
-        // An absent file is the normal state of a fresh seat, not an I/O fault:
-        // say what to put there instead of quoting the OS error.
-        if !std::path::Path::new(&path).is_file() {
-            bail!("no credentials file at {path} yet. {SETUP_HINT}");
-        }
-        let raw = std::fs::read_to_string(&path)
-            .with_context(|| format!("reading CLOUDFLARE_CREDENTIALS_FILE {path}"))?;
-        for line in raw.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            if let Some(v) = line.strip_prefix("TOKEN=") {
-                let v = v.trim().trim_matches('"');
-                if !v.is_empty() {
-                    return Ok(v.to_string());
-                }
-            }
-        }
-        bail!("{path} must contain a TOKEN=... line");
+        return token_from_file(&path);
     }
     bail!("no Cloudflare credentials configured. {SETUP_HINT}")
+}
+
+fn token_from_file(path: &str) -> Result<String> {
+    // An absent file is the normal state of a fresh seat, not an I/O fault:
+    // say what to put there instead of quoting the OS error.
+    if !std::path::Path::new(path).is_file() {
+        bail!("no credentials file at {path} yet. {SETUP_HINT}");
+    }
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("reading CLOUDFLARE_CREDENTIALS_FILE {path}"))?;
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(v) = line.strip_prefix("TOKEN=") {
+            let v = v.trim().trim_matches('"');
+            if !v.is_empty() {
+                return Ok(v.to_string());
+            }
+        }
+    }
+    bail!("{path} must contain a TOKEN=... line")
 }
 
 /// One Cloudflare REST call. `path` starts with `/` (e.g. `/zones`);
@@ -149,25 +153,20 @@ mod tests {
         assert_eq!(truncated("hi", 10), "hi");
     }
 
+    // The file tests call token_from_file directly: tests run on parallel
+    // threads, and two of them pointing the shared CLOUDFLARE_CREDENTIALS_FILE
+    // at different files made each read the other's (flaky CI, 2026-10).
     #[test]
     fn creds_file_parses_and_ignores_noise() {
         let dir = std::env::temp_dir().join("dangler-cloudflare-test");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("creds");
         std::fs::write(&p, "# a comment\n\nTOKEN=  abc123  \n").unwrap();
-        // SAFETY: test-local env mutation; tests touching env run in one process.
-        unsafe {
-            std::env::remove_var("CLOUDFLARE_API_TOKEN");
-            std::env::set_var("CLOUDFLARE_CREDENTIALS_FILE", &p);
-        }
         assert_eq!(
-            load_token().unwrap(),
+            token_from_file(p.to_str().unwrap()).unwrap(),
             "abc123",
             "comments and blank lines are skipped and the value is trimmed"
         );
-        unsafe {
-            std::env::remove_var("CLOUDFLARE_CREDENTIALS_FILE");
-        }
     }
 
     #[test]
@@ -176,15 +175,11 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("empty-creds");
         std::fs::write(&p, "# nothing useful here\n").unwrap();
-        unsafe {
-            std::env::remove_var("CLOUDFLARE_API_TOKEN");
-            std::env::set_var("CLOUDFLARE_CREDENTIALS_FILE", &p);
-        }
-        let err = load_token().unwrap_err().to_string();
+        let err = token_from_file(p.to_str().unwrap())
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("TOKEN="), "the error says what the file needs");
-        unsafe {
-            std::env::remove_var("CLOUDFLARE_CREDENTIALS_FILE");
-        }
+        assert!(err.contains("empty-creds"), "the error names the file");
     }
 
     #[test]
