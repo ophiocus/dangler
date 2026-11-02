@@ -92,6 +92,23 @@ something a session mints for itself.
 > ⚠️ Keep credentials out of `dangler.toml` — reference them with `env_file`.
 > The config still tends to accumulate paths and identities; this repo gitignores it.
 
+**Nothing is fixed at startup.** dangler re-reads `dangler.toml` when it changes
+(checked on every call, and forced by a call that names an entry it doesn't know),
+installs a new entry's skill at that moment, and keeps the last good config if the
+file stops parsing (`list_servers` shows `config_error`). A warm child whose entry
+changed is respawned from the new spec once idle. Credential files are watched
+too: when `env_file`, `header_file`, an OAuth grant or a path listed in the entry's
+`watch` changes, the idle child is respawned on its next call, so a re-minted token
+needs no restart:
+
+```toml
+[servers.mail]
+command = "some-mcp-server"
+watch = ["C:/Users/you/.secrets/mail-token.json"]   # read once at startup by the child
+```
+
+Details: [docs/architecture.md](docs/architecture.md) → "Nothing fixed at startup".
+
 Then register dangler as the *only* MCP server your client needs:
 
 ```bash

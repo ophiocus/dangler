@@ -35,7 +35,7 @@ pub struct Config {
 
 /// How to reach one downstream MCP server: a stdio child process (`command`)
 /// or a streamable-HTTP endpoint (`url`). Exactly one of the two.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerSpec {
     /// Executable to spawn (e.g. `npx`, `wsl`, an absolute binary path).
@@ -69,6 +69,14 @@ pub struct ServerSpec {
     /// key's value nor the file's contents are ever logged. `#` comments and
     /// blank lines are ignored; surrounding quotes on a value are stripped.
     pub env_file: Option<PathBuf>,
+    /// Credential files the child reads once at startup and then keeps in
+    /// memory (a token, a key file). When one is created, rewritten or removed,
+    /// dangler respawns the idle child on its next call, so a token minted after
+    /// dangler started is used without a restart. `env_file`, `header_file` and
+    /// an `auth = "oauth"` grant are watched without being listed here. Give
+    /// absolute paths; `~` is not expanded.
+    #[serde(default)]
+    pub watch: Vec<PathBuf>,
     /// Working directory for the child; inherits dangler's when unset.
     pub cwd: Option<PathBuf>,
     /// Per-server idle reap override (seconds; 0 = never reap this server).
@@ -114,6 +122,18 @@ impl ServerSpec {
                 oauth: self.auth.as_deref() == Some("oauth"),
             }),
         }
+    }
+
+    /// Files whose change means a warm child holds stale credentials:
+    /// `env_file`, `header_file` and every `watch` entry. (An OAuth grant is
+    /// added by the fleet, which knows where dangler stores it.)
+    pub fn credential_files(&self) -> Vec<PathBuf> {
+        self.env_file
+            .iter()
+            .chain(self.header_file.iter())
+            .chain(self.watch.iter())
+            .cloned()
+            .collect()
     }
 
     /// Headers for an HTTP server: `header_file` first, then `headers` on top.
@@ -349,6 +369,29 @@ mod tests {
         assert_eq!(alpha.cwd.as_deref(), Some(std::path::Path::new("/tmp")));
         let beta = &cfg.servers["beta"];
         assert!(beta.args.is_empty() && beta.env.is_empty() && beta.cwd.is_none());
+    }
+
+    #[test]
+    fn credential_files_are_env_file_header_file_and_watch() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [servers.mail]
+            command = "uv"
+            env_file = "/s/env"
+            watch = ["/s/token.json", "/s/key"]
+
+            [servers.plain]
+            command = "uv"
+            "#,
+        )
+        .unwrap();
+        let files: Vec<String> = cfg.servers["mail"]
+            .credential_files()
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect();
+        assert_eq!(files, ["/s/env", "/s/token.json", "/s/key"]);
+        assert!(cfg.servers["plain"].credential_files().is_empty());
     }
 
     #[test]

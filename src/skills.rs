@@ -240,7 +240,7 @@ pub fn sync(config: &mut Config) -> Result<SyncReport> {
         disabled.insert(
             o.server.clone(),
             format!(
-                "disabled: {}. Add a SKILL.md (frontmatter `name` + `description`) and restart dangler",
+                "disabled: {}. Add a SKILL.md (frontmatter `name` + `description`) dangler picks it up on the next call that names this server",
                 o.problem.as_deref().unwrap_or("no skill")
             ),
         );

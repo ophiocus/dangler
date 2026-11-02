@@ -123,7 +123,8 @@ async fn serve(config: Config, config_path: &std::path::Path) -> Result<()> {
         servers = config.servers.len(),
         "dangler starting (stdio)"
     );
-    let fleet = Arc::new(Fleet::new(config));
+    // Watching: entries and credentials added later are picked up without a restart.
+    let fleet = Arc::new(Fleet::watching(config, config_path));
     tokio::spawn({
         let fleet = fleet.clone();
         async move { fleet.reap_loop().await }

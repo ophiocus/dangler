@@ -6,10 +6,16 @@
 //! [`Fleet::reap_loop`] cancels it once idle past its timeout (or
 //! [`Fleet::drop_server`] does so on demand). Cached schemas outlive the
 //! process, so `search_tools` answers even for cold servers.
+//!
+//! Nothing is fixed at startup. [`Fleet::refresh`] re-reads `dangler.toml`
+//! when it changes (or when a call names an entry dangler doesn't know), and a
+//! warm child whose credential files changed since it spawned is respawned on
+//! its next idle acquire, so a new identity or a re-minted token needs no restart.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result, anyhow};
 use rmcp::ServiceExt;
@@ -37,12 +43,47 @@ struct Child {
     last_used: Instant,
     /// Requests currently using this child — a child with traffic is never reaped.
     inflight: u32,
+    /// Credential files and how they looked when the child spawned.
+    credentials: Vec<(PathBuf, Stamp)>,
+    /// Its config entry changed or left while it was busy: retire it once idle.
+    stale: bool,
+}
+
+/// What a file looked like: modification time and size, `None` while absent.
+type Stamp = Option<(SystemTime, u64)>;
+
+fn stamp(path: &Path) -> Stamp {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((
+        meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+        meta.len(),
+    ))
+}
+
+/// Whether any credential file was created, rewritten or removed since the stamps were taken.
+fn credentials_changed(credentials: &[(PathBuf, Stamp)]) -> bool {
+    credentials.iter().any(|(path, then)| stamp(path) != *then)
+}
+
+/// A poisoned lock only means another thread panicked mid-update; the data is still usable.
+fn locked<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The file the fleet was loaded from, so it can be re-read when it changes.
+struct Source {
+    path: PathBuf,
+    /// The file as of the last successful load.
+    loaded: std::sync::Mutex<Stamp>,
+    /// Why the last re-read failed (the previous config stays in force), if it did.
+    error: std::sync::Mutex<Option<String>>,
 }
 
 /// The downstream fleet: configured MCP servers, spawned lazily on first touch,
 /// reaped when idle.
 pub struct Fleet {
-    config: Config,
+    config: std::sync::RwLock<Arc<Config>>,
+    source: Option<Source>,
     children: Mutex<HashMap<String, Child>>,
     /// Tool schemas harvested from each server we've spawned at least once.
     cache: Mutex<HashMap<String, Vec<Tool>>>,
@@ -110,10 +151,104 @@ impl Fleet {
             );
         }
         Self {
-            config,
+            config: std::sync::RwLock::new(Arc::new(config)),
+            source: None,
             children: Mutex::new(HashMap::new()),
             cache: Mutex::new(cache),
         }
+    }
+
+    /// A fleet that re-reads `path` (already loaded and skill-synced into
+    /// `config`) whenever the file changes. See [`Fleet::refresh`].
+    pub fn watching(config: Config, path: &Path) -> Self {
+        let mut fleet = Self::new(config);
+        fleet.source = Some(Source {
+            path: path.to_path_buf(),
+            loaded: std::sync::Mutex::new(stamp(path)),
+            error: std::sync::Mutex::new(None),
+        });
+        fleet
+    }
+
+    /// The config in force now.
+    fn cfg(&self) -> Arc<Config> {
+        self.config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Re-read `dangler.toml` if it changed since the last load (one `stat`
+    /// otherwise), or unconditionally with `force`. The skills are synced again,
+    /// so a new entry's skill is installed at that moment. A file that fails to
+    /// parse leaves the previous config in force; the error is logged, kept for
+    /// `list_servers`, and the file is retried on the next call. Warm children
+    /// whose entry changed or left are retired: at once if idle, else when their
+    /// last request ends.
+    pub async fn refresh(&self, force: bool) {
+        let Some(src) = &self.source else { return };
+        let now = stamp(&src.path);
+        if !force && now == *locked(&src.loaded) {
+            return;
+        }
+        let loaded = Config::load(&src.path)
+            .and_then(|mut c| crate::skills::sync(&mut c).map(|report| (c, report)));
+        let (new, report) = match loaded {
+            Ok(x) => x,
+            Err(e) => {
+                let msg = format!("{e:#}");
+                tracing::error!(error = %msg, "dangler.toml did not reload; the previous config stays in force");
+                *locked(&src.error) = Some(msg);
+                return;
+            }
+        };
+        for o in report.missing() {
+            tracing::error!(server = %o.server, reason = %o.problem.as_deref().unwrap_or(""), "disabled: no skill");
+        }
+        *locked(&src.loaded) = now;
+        *locked(&src.error) = None;
+        let new = Arc::new(new);
+        let old = std::mem::replace(
+            &mut *self.config.write().unwrap_or_else(|e| e.into_inner()),
+            new.clone(),
+        );
+        if !force || old.servers != new.servers {
+            tracing::info!(servers = new.servers.len(), path = %src.path.display(), "reloaded fleet config");
+        }
+
+        let mut retired = Vec::new();
+        {
+            let mut children = self.children.lock().await;
+            let changed: Vec<String> = children
+                .keys()
+                .filter(|n| old.servers.get(*n) != new.servers.get(*n))
+                .cloned()
+                .collect();
+            for name in changed {
+                if children[&name].inflight == 0 {
+                    retired.push((name.clone(), children.remove(&name).expect("listed above")));
+                } else if let Some(c) = children.get_mut(&name) {
+                    c.stale = true;
+                }
+            }
+        }
+        for (name, child) in retired {
+            tracing::info!(server = %name, "retired: its config entry changed or left");
+            Self::cancel_service(child.service, &name).await;
+        }
+    }
+
+    /// `refresh`, forced when `name` is not a served entry, so a server added
+    /// to the file (or whose skill was added after it was disabled) is found on
+    /// the call that names it.
+    pub async fn refresh_for(&self, name: &str) {
+        let known = self.cfg().servers.contains_key(name);
+        self.refresh(!known).await;
+    }
+
+    /// The reload error to show beside the fleet, if the file is currently broken.
+    pub fn reload_error(&self) -> Option<String> {
+        self.source.as_ref().and_then(|s| locked(&s.error).clone())
     }
 
     async fn persist_cache(&self) {
@@ -133,32 +268,45 @@ impl Fleet {
 
     /// Look up a server's launch spec, erroring on names not in the config —
     /// and saying so when the name is there but disabled for carrying no skill.
-    fn spec(&self, name: &str) -> Result<&ServerSpec> {
-        self.config
-            .servers
-            .get(name)
-            .ok_or_else(|| match self.config.disabled.get(name) {
-                Some(reason) => anyhow!("server '{name}' is {reason}"),
-                None => anyhow!("no server '{name}' in config"),
-            })
+    fn spec(&self, name: &str) -> Result<ServerSpec> {
+        let cfg = self.cfg();
+        cfg.servers.get(name).cloned().ok_or_else(|| {
+            let broken = self
+                .reload_error()
+                .map(|e| format!(" (dangler.toml did not reload: {e})"))
+                .unwrap_or_default();
+            match cfg.disabled.get(name) {
+                Some(reason) => anyhow!("server '{name}' is {reason}{broken}"),
+                None => anyhow!("no server '{name}' in config{broken}"),
+            }
+        })
+    }
+
+    /// Credential files of a server: its spec's, plus the OAuth grant dangler holds for it.
+    fn credential_files(name: &str, spec: &ServerSpec) -> Vec<PathBuf> {
+        let mut files = spec.credential_files();
+        if let Ok(Transport::Http { oauth: true, .. }) = spec.transport() {
+            files.push(crate::oauth::store_path(name));
+        }
+        files
     }
 
     /// Effective idle timeout for a server: per-server override, else global,
     /// else the default. 0 anywhere means "never reap".
     fn idle_timeout(&self, name: &str) -> Option<Duration> {
-        let secs = self
-            .config
+        let cfg = self.cfg();
+        let secs = cfg
             .servers
             .get(name)
             .and_then(|s| s.idle_timeout_secs)
-            .or(self.config.idle_timeout_secs)
+            .or(cfg.idle_timeout_secs)
             .unwrap_or(DEFAULT_IDLE_TIMEOUT_SECS);
         (secs > 0).then(|| Duration::from_secs(secs))
     }
 
     /// The configured account/identity label for a server, if any.
     pub fn identity_of(&self, name: &str) -> Option<String> {
-        self.config
+        self.cfg()
             .servers
             .get(name)
             .and_then(|s| s.identity.clone())
@@ -166,16 +314,16 @@ impl Fleet {
 
     /// The installed skill name for a server, if any.
     pub fn skill_of(&self, name: &str) -> Option<String> {
-        self.config.skills.get(name).cloned()
+        self.cfg().skills.get(name).cloned()
     }
 
     /// Status of every configured server, warm or cold — and, after them, the
     /// entries disabled for carrying no skill, so a caller sees why a name is missing.
     pub async fn statuses(&self) -> Vec<ServerStatus> {
+        let cfg = self.cfg();
         let children = self.children.lock().await;
         let cache = self.cache.lock().await;
-        let mut rows: Vec<ServerStatus> = self
-            .config
+        let mut rows: Vec<ServerStatus> = cfg
             .servers
             .iter()
             .map(|(name, spec)| ServerStatus {
@@ -184,37 +332,50 @@ impl Fleet {
                 cached_tools: cache.get(name).map(|t| t.len()),
                 identity: spec.identity.clone(),
                 setup_hint: spec.setup_hint.clone(),
-                skill: self.config.skills.get(name).cloned(),
+                skill: cfg.skills.get(name).cloned(),
                 disabled: None,
             })
             .collect();
-        rows.extend(
-            self.config
-                .disabled
-                .iter()
-                .map(|(name, reason)| ServerStatus {
-                    name: name.clone(),
-                    warm: false,
-                    cached_tools: cache.get(name).map(|t| t.len()),
-                    identity: None,
-                    setup_hint: None,
-                    skill: None,
-                    disabled: Some(reason.clone()),
-                }),
-        );
+        rows.extend(cfg.disabled.iter().map(|(name, reason)| ServerStatus {
+            name: name.clone(),
+            warm: false,
+            cached_tools: cache.get(name).map(|t| t.len()),
+            identity: None,
+            setup_hint: None,
+            skill: None,
+            disabled: Some(reason.clone()),
+        }));
         rows
     }
 
     /// Spawn the server if cold; mark it in-use and return a peer handle.
     /// Every acquire must be paired with a release.
     async fn acquire(&self, name: &str) -> Result<Peer<RoleClient>> {
-        let spec = self.spec(name)?.clone();
+        let spec = self.spec(name)?;
         let mut children = self.children.lock().await;
         if let Some(child) = children.get_mut(name) {
-            child.inflight += 1;
-            child.last_used = Instant::now();
-            return Ok(child.service.peer().clone());
+            // A busy child is shared even when stale; it is retired once idle.
+            let fresh = !child.stale && !credentials_changed(&child.credentials);
+            if fresh || child.inflight > 0 {
+                child.inflight += 1;
+                child.last_used = Instant::now();
+                return Ok(child.service.peer().clone());
+            }
+            let old = children.remove(name).expect("present above");
+            tracing::info!(
+                server = name,
+                "respawning: its config entry or credential files changed since it started"
+            );
+            let owned = name.to_string();
+            tokio::spawn(async move { Self::cancel_service(old.service, &owned).await });
         }
+        let credentials: Vec<(PathBuf, Stamp)> = Self::credential_files(name, &spec)
+            .into_iter()
+            .map(|p| {
+                let s = stamp(&p);
+                (p, s)
+            })
+            .collect();
         // Unprovisioned servers should explain themselves at the failure site.
         let hint = spec
             .setup_hint
@@ -283,6 +444,8 @@ impl Fleet {
                 service,
                 last_used: Instant::now(),
                 inflight: 1,
+                credentials,
+                stale: false,
             },
         );
         tracing::info!(server = name, "spawned downstream server");
@@ -290,10 +453,26 @@ impl Fleet {
     }
 
     /// Mark a request finished: decrement `inflight` and restart the idle clock.
+    /// A stale child (its entry changed while it was busy) is retired once idle.
     async fn release(&self, name: &str) {
-        if let Some(child) = self.children.lock().await.get_mut(name) {
-            child.inflight = child.inflight.saturating_sub(1);
-            child.last_used = Instant::now();
+        let retired = {
+            let mut children = self.children.lock().await;
+            match children.get_mut(name) {
+                Some(child) => {
+                    child.inflight = child.inflight.saturating_sub(1);
+                    child.last_used = Instant::now();
+                    if child.stale && child.inflight == 0 {
+                        children.remove(name)
+                    } else {
+                        None
+                    }
+                }
+                None => None,
+            }
+        };
+        if let Some(child) = retired {
+            tracing::info!(server = name, "retired: its config entry changed or left");
+            Self::cancel_service(child.service, name).await;
         }
     }
 
@@ -397,7 +576,7 @@ impl Fleet {
     /// Pre-loader mode: spawn every configured server, harvest + persist its schemas,
     /// then reap it. Returns (server, result-summary) per server.
     pub async fn warm_all(&self) -> Vec<(String, Result<usize>)> {
-        let names: Vec<String> = self.config.servers.keys().cloned().collect();
+        let names: Vec<String> = self.cfg().servers.keys().cloned().collect();
         let mut out = Vec::new();
         for name in names {
             let res = self.load(&name).await.map(|t| t.len());
@@ -432,7 +611,7 @@ impl Fleet {
     /// Servers that have never been loaded (so search can say what it couldn't see).
     pub async fn unindexed(&self) -> Vec<String> {
         let cache = self.cache.lock().await;
-        self.config
+        self.cfg()
             .servers
             .keys()
             .filter(|n| !cache.contains_key(*n))
@@ -481,6 +660,17 @@ mod tests {
             identity: None,
             setup_hint: None,
             skill: None,
+            watch: vec![],
+        }
+    }
+
+    /// A fleet without the persisted cache (which `Fleet::new` reads from the env-chosen path).
+    fn bare(config: Config) -> Fleet {
+        Fleet {
+            config: std::sync::RwLock::new(Arc::new(config)),
+            source: None,
+            children: Mutex::new(HashMap::new()),
+            cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -519,11 +709,7 @@ mod tests {
         cfg.servers
             .insert("never".into(), spec_with_timeout(Some(0)));
 
-        let fleet = Fleet {
-            config: cfg,
-            children: Mutex::new(HashMap::new()),
-            cache: Mutex::new(HashMap::new()),
-        };
+        let fleet = bare(cfg);
         assert_eq!(
             fleet.idle_timeout("default"),
             Some(Duration::from_secs(DEFAULT_IDLE_TIMEOUT_SECS))
@@ -533,11 +719,7 @@ mod tests {
 
         let mut cfg2 = test_config(&["srv"]);
         cfg2.idle_timeout_secs = Some(120);
-        let fleet2 = Fleet {
-            config: cfg2,
-            children: Mutex::new(HashMap::new()),
-            cache: Mutex::new(HashMap::new()),
-        };
+        let fleet2 = bare(cfg2);
         assert_eq!(fleet2.idle_timeout("srv"), Some(Duration::from_secs(120)));
     }
 
@@ -588,5 +770,80 @@ mod tests {
         assert_eq!(cache["srv"][0].name, "t1");
         drop(cache);
         assert!(reloaded.unindexed().await.is_empty());
+    }
+
+    #[test]
+    fn credential_stamps_see_creation_rewrite_and_removal() {
+        let dir = std::env::temp_dir().join("dangler-test-credstamp");
+        std::fs::create_dir_all(&dir).unwrap();
+        let token = dir.join("token.json");
+        std::fs::remove_file(&token).ok();
+
+        let taken = |p: &Path| vec![(p.to_path_buf(), stamp(p))];
+        let absent = taken(&token);
+        assert!(!credentials_changed(&absent));
+        std::fs::write(&token, "{\"v\":1}").unwrap();
+        assert!(
+            credentials_changed(&absent),
+            "a token minted after spawn counts"
+        );
+
+        let minted = taken(&token);
+        assert!(!credentials_changed(&minted));
+        std::fs::write(&token, "{\"v\":22}").unwrap();
+        assert!(credentials_changed(&minted), "a re-consent counts");
+
+        let reminted = taken(&token);
+        std::fs::remove_file(&token).unwrap();
+        assert!(credentials_changed(&reminted), "a revoked token counts");
+    }
+
+    #[tokio::test]
+    async fn config_reloads_new_entries_and_keeps_the_old_one_when_broken() {
+        let _guard = env_lock().lock().await;
+        let dir = std::env::temp_dir().join("dangler-test-reload");
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("skills")).unwrap();
+        unsafe { std::env::set_var("DANGLER_CACHE", dir.join("none.json")) };
+        let skill = dir.join("SKILL.md");
+        std::fs::write(&skill, "---\nname: t-mail\ndescription: test\n---\nbody\n").unwrap();
+        let fwd = |p: &Path| p.display().to_string().replace('\\', "/");
+        let entry = |name: &str| {
+            format!(
+                "[servers.{name}]\ncommand = \"unused\"\nskill = \"{}\"\n",
+                fwd(&skill)
+            )
+        };
+        let head = format!("skills_dir = \"{}\"\n", fwd(&dir.join("skills")));
+        let path = dir.join("dangler.toml");
+        std::fs::write(&path, format!("{head}{}", entry("first"))).unwrap();
+
+        let mut cfg = Config::load(&path).unwrap();
+        crate::skills::sync(&mut cfg).unwrap();
+        let fleet = Fleet::watching(cfg, &path);
+        assert!(fleet.spec("second").is_err());
+
+        // An entry added while dangler runs is served on the call that names it.
+        std::fs::write(
+            &path,
+            format!("{head}{}{}", entry("first"), entry("second")),
+        )
+        .unwrap();
+        fleet.refresh_for("second").await;
+        assert!(fleet.spec("second").is_ok());
+        assert_eq!(fleet.skill_of("second").as_deref(), Some("t-mail"));
+
+        // A broken file keeps the fleet as it was and says why.
+        std::fs::write(&path, format!("{head}[servers.third\n")).unwrap();
+        fleet.refresh(false).await;
+        assert!(fleet.spec("second").is_ok());
+        let err = fleet.spec("third").unwrap_err().to_string();
+        assert!(err.contains("did not reload"), "{err}");
+
+        // Fixed: the error clears and the removal takes effect.
+        std::fs::write(&path, format!("{head}{}", entry("first"))).unwrap();
+        fleet.refresh(false).await;
+        assert!(fleet.reload_error().is_none());
+        assert!(fleet.spec("second").is_err());
     }
 }

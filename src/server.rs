@@ -176,6 +176,22 @@ impl ServerHandler for Dangler {
         _ctx: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         tracing::debug!(tool = %request.name, "meta-tool call");
+        // The config is re-read when it changed; a call naming an unknown entry
+        // forces a re-read, so a server added to dangler.toml is found at once.
+        match request.name.as_ref() {
+            TOOL_LIST_SERVERS | TOOL_SEARCH_TOOLS => self.fleet.refresh(false).await,
+            _ => {
+                let named = request.arguments.as_ref().and_then(|a| {
+                    a.get("server")
+                        .or_else(|| a.get("name"))
+                        .and_then(|v| v.as_str())
+                });
+                match named {
+                    Some(name) => self.fleet.refresh_for(name).await,
+                    None => self.fleet.refresh(false).await,
+                }
+            }
+        }
         match request.name.as_ref() {
             TOOL_LIST_SERVERS => {
                 let rows: Vec<_> = self
@@ -199,7 +215,13 @@ impl ServerHandler for Dangler {
                         })
                     })
                     .collect();
-                Ok(text_result(json!({"servers": rows})))
+                let mut out = json!({"servers": rows});
+                if let Some(e) = self.fleet.reload_error() {
+                    out["config_error"] = json!(format!(
+                        "dangler.toml did not reload, so the fleet above is the last good one: {e}"
+                    ));
+                }
+                Ok(text_result(out))
             }
             TOOL_SEARCH_TOOLS => {
                 let args: SearchArgs = parse_args(request.arguments)?;

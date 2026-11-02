@@ -59,9 +59,9 @@ registrations — but client-agnostic, self-hosted, and under your config contro
 
 ## Modules
 
-- `config.rs` — `dangler.toml` (`[servers.<name>] command/args/env/cwd`).
-- `fleet.rs` — the downstream fleet: lazy spawn, running-client registry, schema cache
-  (in-memory v0), search over cached tools.
+- `config.rs` — `dangler.toml` (`[servers.<name>] command/args/env/cwd/watch`).
+- `fleet.rs` — the downstream fleet: lazy spawn, running-client registry, schema cache,
+  search over cached tools, config re-read on change, respawn on credential change.
 - `server.rs` — upstream `ServerHandler`: the 5 meta-tools, hand-written JSON schemas,
   dispatch into the fleet.
 - `skills.rs` — every entry's `SKILL.md` resolved, validated, installed into the
@@ -91,6 +91,38 @@ reaped mid-request, no matter how stale `last_used` looks. Reaped ≠ forgotten:
 schemas stay, so `search_tools` still answers and the next `call_tool` respawns.
 Verified live: 30s-timeout child auto-reaped ~58s after spawn (timeout + scan phase),
 status warm → cold, schemas intact.
+
+## Nothing fixed at startup: live config and credentials (shipped 2026-11-02)
+
+Carlos's requirement: a new entry, a changed entry, a new identity or a re-minted token
+works on the next call, with no restart of dangler or of the client.
+
+- **Config.** Every meta-tool call first `stat`s `dangler.toml` (`Fleet::refresh`). A
+  changed modification time or size re-reads it and runs `skills::sync` again, so a new
+  entry's skill is installed at that moment. A call that names an entry the fleet does not
+  serve (unknown, or disabled for a missing skill) forces the re-read even when the file
+  is unchanged (`refresh_for`): that is how a SKILL.md written after the entry is found.
+  A file that fails to parse leaves the last good config in force. The error goes to the
+  log, to `list_servers` as `config_error`, and onto "no server" errors, and the file is
+  retried on the next call.
+- **Children of a changed entry.** A warm child whose `[servers.<name>]` block changed or
+  left is retired: at once if idle, else marked stale and retired when its last request
+  ends (a busy child is never cut mid-call). The next call spawns it from the new spec.
+- **Credentials.** At spawn the fleet stamps (mtime, size) every credential file of the
+  entry: `env_file`, `header_file`, an `auth = "oauth"` grant
+  (`~/.dangler/oauth/<server>.json`) and each path in the entry's `watch` list. On the
+  next acquire of an idle child, any change (created, rewritten, removed) respawns it, so
+  the new child reads the new token. List in `watch` the token files a child reads once
+  and keeps in memory; a child that re-reads its token per call needs no entry there.
+  The `google` extension is one of those: it rebuilds its API clients whenever its
+  `GWS_MCP_TOKEN` file changes.
+- **Several accounts on one extension** are plain config: the same `command`/`args`, a
+  different `env` (token path, scopes, defaults) and a skill per identity. See
+  `extensions/google/README.md` → "A second identity" for the steps.
+
+The one restart left: an already-running dangler process loads this code only when it
+starts. A new dangler binary reaches each client the next time that client spawns
+dangler.
 
 ## Extensions (first-party fleet servers)
 
