@@ -13,7 +13,6 @@ import base64
 import io
 import json
 import sys
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -36,9 +35,30 @@ mcp = FastMCP(
 
 
 # ----------------------------------------------------------------- services
-@lru_cache(maxsize=None)
+# API clients are built once per token file state: when the file is created, rewritten
+# (a re-consent, the 7-day re-auth) or removed, the next call builds them again from it,
+# so a token minted after this server started is used without restarting it.
+_services: dict[tuple[str, str], Any] = {}
+_services_token: tuple[int, int] | None = None
+
+
+def _token_state() -> tuple[int, int] | None:
+    try:
+        st = auth.TOKEN_FILE.stat()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
 def _svc(name: str, version: str):
-    return build(name, version, credentials=auth.load_credentials(), cache_discovery=False)
+    global _services_token
+    state = _token_state()
+    if state != _services_token:
+        _services.clear()
+        _services_token = state
+    if (name, version) not in _services:
+        _services[(name, version)] = build(name, version, credentials=auth.load_credentials(), cache_discovery=False)
+    return _services[(name, version)]
 
 
 def _docs():
@@ -382,10 +402,15 @@ def _gmail():
 
 
 def _draft_message(
-    to, cc, bcc, subject, text, html, attachments, reply_to_message_id
+    to, cc, bcc, subject, text, html, attachments, reply_to_message_id, sender=None
 ) -> tuple[bytes, str | None]:
     """Build the RFC 822 bytes (looking up the original for a reply) and the threadId to file it in."""
     thread_id = in_reply_to = references = None
+    sender = sender or auth.DEFAULT_FROM
+    if sender:
+        auth.require(auth.GMAIL_READONLY)
+        send_as = _gmail().users().settings().sendAs().list(userId="me").execute().get("sendAs", [])
+        gmail.check_sender(sender, send_as)
     if reply_to_message_id:
         auth.require(auth.GMAIL_READONLY)
         orig = _gmail().users().messages().get(
@@ -397,7 +422,7 @@ def _draft_message(
         subject = subject or ctx["subject"]
         to = to or ctx["reply_address"]
     msg = gmail.build_message(
-        to=to, cc=cc, bcc=bcc, subject=subject or "", text=text, html=html,
+        sender=sender, to=to, cc=cc, bcc=bcc, subject=subject or "", text=text, html=html,
         attachments=attachments, in_reply_to=in_reply_to, references=references,
     )
     return msg.as_bytes(), thread_id
@@ -432,13 +457,16 @@ def gmail_draft_create(
     html: str | None = None,
     attachments: list[str] | None = None,
     reply_to_message_id: str | None = None,
+    sender: str | None = None,
 ) -> str:
     """Create a Gmail DRAFT (does not send). Body: `text` and/or `html` (both -> multipart/alternative); links are stored exactly as given.
     `attachments`: local file paths, read by the server. `reply_to_message_id`: Gmail message id to answer — threads the draft,
     sets In-Reply-To/References, defaults subject to "Re: <original>" and `to` to the original's Reply-To/From.
+    `sender`: the From ("Name <addr>" or addr); must be the mailbox's own address or a verified send-as, else refused.
+    Defaults to this entry's GWS_MCP_DEFAULT_FROM, else Gmail's own default.
     Returns JSON {draft_id, message_id, thread_id}."""
     try:
-        raw, thread_id = _draft_message(to, cc, bcc, subject, text, html, attachments, reply_to_message_id)
+        raw, thread_id = _draft_message(to, cc, bcc, subject, text, html, attachments, reply_to_message_id, sender)
         body, media = _draft_body(raw, thread_id)
         r = _gmail().users().drafts().create(userId="me", body=body, media_body=media).execute()
         return _draft_result(r)
@@ -457,11 +485,12 @@ def gmail_draft_update(
     html: str | None = None,
     attachments: list[str] | None = None,
     reply_to_message_id: str | None = None,
+    sender: str | None = None,
 ) -> str:
     """Replace a Gmail draft's whole content by draft id (same arguments as gmail_draft_create; nothing is kept from the old version).
     Returns JSON {draft_id, message_id, thread_id} — the message id changes on every update."""
     try:
-        raw, thread_id = _draft_message(to, cc, bcc, subject, text, html, attachments, reply_to_message_id)
+        raw, thread_id = _draft_message(to, cc, bcc, subject, text, html, attachments, reply_to_message_id, sender)
         body, media = _draft_body(raw, thread_id, draft_id)
         r = _gmail().users().drafts().update(userId="me", id=draft_id, body=body, media_body=media).execute()
         return _draft_result(r)
@@ -492,7 +521,7 @@ def gmail_draft_send(draft_id: str) -> str:
         d = _gmail().users().drafts().get(userId="me", id=draft_id, format="metadata").execute()
         hdr = {h["name"].lower(): h["value"] for h in d.get("message", {}).get("payload", {}).get("headers", [])}
         r = _gmail().users().drafts().send(userId="me", body={"id": draft_id}).execute()
-        return json.dumps({"sent_message_id": r.get("id"), "thread_id": r.get("threadId"),
+        return json.dumps({"sent_message_id": r.get("id"), "thread_id": r.get("threadId"), "from": hdr.get("from"),
                            "to": hdr.get("to"), "subject": hdr.get("subject")}, ensure_ascii=False)
     except Exception as e:
         return _err(e)

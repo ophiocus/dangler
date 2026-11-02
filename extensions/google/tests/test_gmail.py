@@ -146,5 +146,32 @@ class ReadRaw(unittest.TestCase):
         self.assertEqual(gmail.read_raw(raw)["redirect_wrapped_links"], [wrapped])
 
 
+SEND_AS = [
+    {"sendAsEmail": "mailbox@example.com", "isPrimary": True},
+    {"sendAsEmail": "hola@example.org", "verificationStatus": "accepted"},
+    {"sendAsEmail": "pending@example.org", "verificationStatus": "pending"},
+]
+
+
+class Sender(unittest.TestCase):
+    def test_from_header_round_trip(self):
+        msg = gmail.build_message(sender="Ejemplo ñ <hola@example.org>", to="a@x.co", text="t")
+        self.assertEqual(parse(msg)["From"], "Ejemplo ñ <hola@example.org>")
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+        self.assertEqual(gmail.read_raw(raw)["headers"]["From"], "Ejemplo ñ <hola@example.org>")
+
+    def test_no_sender_no_from(self):
+        self.assertIsNone(parse(gmail.build_message(to="a@x.co", text="t"))["From"])
+
+    def test_accepts_primary_and_verified_alias(self):
+        gmail.check_sender("mailbox@example.com", SEND_AS)
+        gmail.check_sender("Ejemplo ñ <Hola@Example.ORG>", SEND_AS)
+
+    def test_refuses_unknown_and_pending(self):
+        for bad in ("someone@example.org", "pending@example.org"):
+            with self.assertRaises(ValueError):
+                gmail.check_sender(bad, SEND_AS)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -50,8 +50,31 @@ def reply_context(headers: list[dict]) -> dict:
     }
 
 
+def address_of(value: str) -> str:
+    """Bare lower-case address out of 'Name <a@b.co>' or 'a@b.co'."""
+    m = re.search(r"<([^>]+)>", value or "")
+    return (m.group(1) if m else (value or "")).strip().lower()
+
+
+def check_sender(sender: str, send_as: list[dict]) -> None:
+    """Raise ValueError unless `sender` is the mailbox's own address or a verified send-as of it.
+
+    Gmail silently rewrites an unknown From to the primary address, so a draft would
+    go out under the wrong name; refuse it here instead.
+    """
+    want = address_of(sender)
+    usable = [
+        s.get("sendAsEmail", "").lower()
+        for s in send_as
+        if s.get("isPrimary") or s.get("verificationStatus", "accepted") == "accepted"
+    ]
+    if want not in usable:
+        raise ValueError(f"{want} is not a send-as address of this mailbox; usable: {', '.join(usable) or 'none'}")
+
+
 def build_message(
     *,
+    sender: str | None = None,
     to: Addresses = None,
     cc: Addresses = None,
     bcc: Addresses = None,
@@ -70,6 +93,8 @@ def build_message(
     never rewritten, so links stay exactly as given.
     """
     msg = EmailMessage(policy=policy.SMTP)
+    if sender:
+        msg["From"] = sender.strip()
     for name, val in (("To", _addr(to)), ("Cc", _addr(cc)), ("Bcc", _addr(bcc))):
         if val:
             msg[name] = val
@@ -129,7 +154,7 @@ def read_raw(raw: str) -> dict:
     body_text, body_html = "".join(text), "".join(html)
     links = list(dict.fromkeys(_URL.findall(body_text) + _URL.findall(body_html)))
     return {
-        "headers": {k: str(msg[k]) for k in ("To", "Cc", "Bcc", "Subject", "In-Reply-To", "References") if msg[k]},
+        "headers": {k: str(msg[k]) for k in ("From", "To", "Cc", "Bcc", "Subject", "In-Reply-To", "References") if msg[k]},
         "text": body_text,
         "html": body_html,
         "attachments": files,

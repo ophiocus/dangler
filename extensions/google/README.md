@@ -96,9 +96,9 @@ the Gmail scopes still drives Docs, Sheets and Drive. The Gmail tools answer
 "…was granted before gmail.compose was added. Run `gws-mcp auth` again…", and
 `gws-mcp doctor` prints `PROBLEM: token lacks …`. Re-running
 `uv run --directory <repo>/extensions/google gws-mcp auth` replaces the token
-with one carrying every scope in `auth.SCOPES`; then `drop_server` /
-`load_server` the `google` entry in dangler (or restart the client) so the
-running server picks it up.
+with one carrying every scope in `auth.SCOPES` (or in `GWS_MCP_SCOPES`). The
+running server notices the token file changed and uses the new token on its
+next call; nothing needs dropping or restarting.
 
 ## Install on a machine
 
@@ -129,6 +129,64 @@ standalone instead, the direct registration still works:
 Env overrides: `GWS_MCP_DIR` (default `~/.gcp`), `GWS_MCP_CLIENT_SECRET`,
 `GWS_MCP_TOKEN`.
 
+### A second identity (a shared mailbox, another account)
+
+One process is one identity. Another account is another fleet entry running the
+same code with its own env — nothing else changes:
+
+| Env | Meaning |
+|---|---|
+| `GWS_MCP_CLIENT_SECRET` | that identity's OAuth client JSON (path, never read by the agent) |
+| `GWS_MCP_TOKEN` | that identity's token file |
+| `GWS_MCP_SCOPES` | short scope names, comma-separated, e.g. `gmail.compose,gmail.readonly` (default: all five) |
+| `GWS_MCP_DEFAULT_FROM` | From for every draft that names no `sender`, e.g. `Oído en Vivo <info@oidoenvivo.com>` |
+| `GWS_MCP_LOGIN_HINT` | account the consent screen opens on, so `auth` lands in the right Google account |
+
+```toml
+[servers.oidoenvivo-mail]
+command = "uv"
+args = ["run", "--directory", "<repo>/extensions/google", "gws-mcp"]
+skill = "<repo>/extensions/google/identities/oidoenvivo-mail/SKILL.md"
+identity = "…"
+[servers.oidoenvivo-mail.env]
+GWS_MCP_CLIENT_SECRET = "C:/Users/<you>/.gcp/tecnocratica/client_secret.json"
+GWS_MCP_TOKEN = "C:/Users/<you>/.gcp/tecnocratica/gws-mcp-token.json"
+GWS_MCP_SCOPES = "gmail.compose,gmail.readonly"
+GWS_MCP_DEFAULT_FROM = "Oído en Vivo <info@oidoenvivo.com>"
+GWS_MCP_LOGIN_HINT = "mailbox@example.com"   # the identity's Google account
+```
+
+Auth for it runs with the same env: set those variables, then `gws-mcp auth`.
+With a Gmail-only scope set, `whoami` reads the Gmail profile instead of Drive.
+
+Steps to add an identity, none of which restarts dangler or the client:
+
+1. **Skill.** Write `identities/<entry>/SKILL.md` (frontmatter `name` and a
+   `description` that says when to reach for this account rather than `google`).
+   dangler disables an entry without one.
+2. **Token.** Run `gws-mcp auth` with that identity's env (`GWS_MCP_TOKEN`,
+   `GWS_MCP_SCOPES`, `GWS_MCP_LOGIN_HINT`) and approve in the browser profile
+   signed in as that account. The token lands at `GWS_MCP_TOKEN`.
+3. **Entry.** Add the `[servers.<entry>]` block above to `~/.dangler/dangler.toml`.
+   dangler re-reads the file on its next call (and at once on a call that
+   names an entry it does not know yet), and installs the skill at that moment.
+4. **Check.** `list_servers` shows the entry; `call_tool {server: "<entry>",
+   tool: "gmail_draft_get", …}` or `gws-mcp whoami` with the same env names
+   the account. If the file has a syntax error, `list_servers` says so in
+   `config_error` and the previous fleet stays in force.
+
+**Re-consent needs no restart either.** The server rebuilds its Google clients
+whenever its token file changes, so after `gws-mcp auth` (a new scope, or the
+weekly re-auth of an app in Testing) the next call uses the new token. Never
+swap token files under a running entry to change accounts: that is a second entry.
+
+**From addresses.** `gmail_draft_create` / `gmail_draft_update` take `sender`.
+It must be the mailbox's own address or a *verified* send-as of it (read with
+`users.settings.sendAs.list`, which `gmail.readonly` covers); anything else is
+refused, because Gmail would silently rewrite an unknown From to the primary
+address. Add a send-as in Gmail settings (an alias of the same Workspace user
+needs no verification mail).
+
 ## Tools
 
 | Docs | Sheets | Drive (read-only) |
@@ -149,7 +207,7 @@ A1 range. Escape hatches (`*_batch_update`) take raw Google API request lists.
 
 | Tool | Does |
 |---|---|
-| `gmail_draft_create` | `to`, `cc`, `bcc` (string or list), `subject`, `text` and/or `html`, `attachments` (local paths, read by the server, MIME type guessed from the name), `reply_to_message_id`. Returns `{draft_id, message_id, thread_id}` |
+| `gmail_draft_create` | `sender` (From; a verified send-as, see above), `to`, `cc`, `bcc` (string or list), `subject`, `text` and/or `html`, `attachments` (local paths, read by the server, MIME type guessed from the name), `reply_to_message_id`. Returns `{draft_id, message_id, thread_id}` |
 | `gmail_draft_update` | `draft_id` + the same arguments; **replaces** the whole draft (nothing carried over). The message id changes, the draft id does not |
 | `gmail_draft_get` | the draft as stored: headers, `text`, `html`, `attachments` (name, type, size), every `links` URL found, and `redirect_wrapped_links` — any link stored as a `google.com/url?…` redirect, which should always be `[]` |
 | `gmail_draft_send` | **sends** an existing draft by id, exactly as stored. Returns `{sent_message_id, thread_id, to, subject}` |

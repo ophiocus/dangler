@@ -29,20 +29,30 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-SCOPES = [
-    "https://www.googleapis.com/auth/documents",
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/gmail.compose",
-    "https://www.googleapis.com/auth/gmail.readonly",
+_SCOPE_ROOT = "https://www.googleapis.com/auth/"
+ALL_SCOPES = [
+    _SCOPE_ROOT + "documents",
+    _SCOPE_ROOT + "spreadsheets",
+    _SCOPE_ROOT + "drive.readonly",
+    _SCOPE_ROOT + "gmail.compose",
+    _SCOPE_ROOT + "gmail.readonly",
 ]
 
-GMAIL_COMPOSE = "https://www.googleapis.com/auth/gmail.compose"
-GMAIL_READONLY = "https://www.googleapis.com/auth/gmail.readonly"
+GMAIL_COMPOSE = _SCOPE_ROOT + "gmail.compose"
+GMAIL_READONLY = _SCOPE_ROOT + "gmail.readonly"
+DRIVE_READONLY = _SCOPE_ROOT + "drive.readonly"
 
+# One identity per process. A second fleet entry (another account, e.g. a shared mailbox)
+# runs the same code with its own env: client secret, token, scope set, default From and
+# the account to suggest at consent.
 DEFAULT_DIR = Path(os.environ.get("GWS_MCP_DIR", str(Path.home() / ".gcp")))
 CLIENT_SECRET = Path(os.environ.get("GWS_MCP_CLIENT_SECRET", str(DEFAULT_DIR / "client_secret.json")))
 TOKEN_FILE = Path(os.environ.get("GWS_MCP_TOKEN", str(DEFAULT_DIR / "gws-mcp-token.json")))
+# Short names, comma-separated (e.g. "gmail.compose,gmail.readonly"); default: all of ALL_SCOPES.
+SCOPES = [_SCOPE_ROOT + s.strip() for s in os.environ["GWS_MCP_SCOPES"].split(",") if s.strip()] \
+    if os.environ.get("GWS_MCP_SCOPES") else list(ALL_SCOPES)
+DEFAULT_FROM = os.environ.get("GWS_MCP_DEFAULT_FROM", "").strip() or None
+LOGIN_HINT = os.environ.get("GWS_MCP_LOGIN_HINT", "").strip() or None
 
 
 def _chmod600(p: Path) -> None:
@@ -100,7 +110,9 @@ def run_auth(open_browser: bool = True, port: int = 0) -> str:
             "from https://console.cloud.google.com/auth/clients and place it there (or set GWS_MCP_CLIENT_SECRET)."
         )
     flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRET), SCOPES)
+    extra = {"login_hint": LOGIN_HINT} if LOGIN_HINT else {}
     creds = flow.run_local_server(
+        **extra,
         port=port,
         open_browser=open_browser,
         prompt="consent",
@@ -115,10 +127,13 @@ def run_auth(open_browser: bool = True, port: int = 0) -> str:
 
 
 def whoami(creds: Credentials | None = None) -> str:
-    """Email of the authorized account (via Drive about.get, covered by drive.readonly)."""
+    """Email of the authorized account (Drive about.get, or the Gmail profile for a Gmail-only token)."""
     from googleapiclient.discovery import build
 
     creds = creds or load_credentials()
+    if DRIVE_READONLY not in (creds.scopes or granted_scopes()):
+        prof = build("gmail", "v1", credentials=creds, cache_discovery=False).users().getProfile(userId="me").execute()
+        return prof.get("emailAddress", "?")
     svc = build("drive", "v3", credentials=creds, cache_discovery=False)
     about = svc.about().get(fields="user(emailAddress)").execute()
     return about.get("user", {}).get("emailAddress", "?")
