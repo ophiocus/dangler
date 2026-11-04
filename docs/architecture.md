@@ -114,11 +114,15 @@ works on the next call, with no restart of dangler or of the client.
   next acquire of an idle child, any change (created, rewritten, removed) respawns it, so
   the new child reads the new token. List in `watch` the token files a child reads once
   and keeps in memory; a child that re-reads its token per call needs no entry there.
-  The `google` extension is one of those: it rebuilds its API clients whenever its
-  `GWS_MCP_TOKEN` file changes.
-- **Several accounts on one extension** are plain config: the same `command`/`args`, a
-  different `env` (token path, scopes, defaults) and a skill per identity. See
-  `extensions/google/README.md` → "A second identity" for the steps.
+  The `google` extension is one of those: it rebuilds each identity's API clients whenever
+  that identity's token file changes.
+- **Several accounts on one extension**, two ways. An extension may serve several
+  identities in one process and take the account per call: the `google` extension reads
+  an accounts file outside the repo (re-read on change) and every tool takes `account`, so
+  a new account needs no fleet entry. Or the account gets an entry of its own, the same
+  `command`/`args` with a different `env` (token path, scopes, defaults), when it needs a
+  skill of its own (its own name tag and rules). See `extensions/google/README.md` →
+  "Several accounts" for the steps.
 
 The one restart left: an already-running dangler process loads this code only when it
 starts. A new dangler binary reaches each client the next time that client spawns
@@ -180,7 +184,7 @@ the Rust ones.
 | --- | --- | --- | --- |
 | `extensions/cloudflare` | `dangler-cloudflare` | Rust | The Cloudflare v4 API: zones, DNS, cache purge, Origin CA certificates, plus a `raw_api` escape hatch. Replaces the vendor plugin's arbitrary-JS `execute` with a named surface behind one scoped token |
 | `extensions/godaddy` | `dangler-godaddy` | Rust | GoDaddy domains, DNS and subscriptions, plus a `raw_api` escape hatch for the long tail |
-| `extensions/google` | `gws-mcp` | Python, run by `uv` | Google Docs and Sheets read/write, Drive read-only, and Gmail drafts (create, replace, read back, delete, send an existing draft), on your own OAuth desktop client |
+| `extensions/google` | `gws-mcp` | Python, run by `uv` | Google Docs, Sheets and Slides read/write, Drive read (folders, uploads with conversion, moves for an account granted Drive write), and Gmail drafts (create, replace, read back, delete, send an existing draft), for several Google accounts picked per call, on your own OAuth desktop client |
 | `extensions/ytdl` | `dangler-ytdl` | Rust | A bundled yt-dlp / ffmpeg / deno toolkit: local video, MP3 and transcript capture |
 | `extensions/comfy` | `comfy-mcp` | Python, run by `uv` | The AIProd image gateway: generated images from the one local ComfyUI service, identical tools on the GPU seat and on remote seats |
 | `extensions/myevery` | — (hosted, `url`) | none — a name tag only | The myevery bus; the folder exists so the wrapper carries its `SKILL.md` like every other entry |
@@ -191,6 +195,17 @@ Two concessions worth knowing: `extensions/google` needs `uv` on PATH and a
 one-time `gws-mcp auth` per machine, and `extensions/ytdl` ships no toolchain at
 all. `YTDL_HOME` points at the toolkit directory, which stays outside the repo
 because it holds large binaries and a cookie jar that is a credential.
+
+**Never touch a `uv`-run extension's `pyproject.toml` while any of its processes run
+(Windows, paid 2026-11-03).** `uv run` reinstalls the project whenever `pyproject.toml`'s
+mtime differs from the one recorded in the venv's `<pkg>.dist-info/uv_cache.json`, and the
+reinstall must replace `.venv\Scripts\<name>.exe`, which a running child (this or another
+session's fleet) holds open and which cannot even be renamed. Every new spawn then fails
+with `error: failed to remove file …/Scripts/gws-mcp.exe: The process cannot access the
+file because it is being used by another process. (os error 32)`. Edits under `src/` do
+not trigger it (an editable install). If it happens: restore the file and set its
+`LastWriteTimeUtc` back to the recorded `timestamp`, and spawns work again. Change
+`pyproject.toml` (dependencies, metadata) only when no child of that extension runs.
 
 ## Roadmap (v0 → useful)
 

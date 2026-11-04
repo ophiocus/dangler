@@ -1,4 +1,4 @@
-"""Offline: API clients follow the token file, so a re-minted token needs no restart.
+"""Offline: API clients follow each identity's token file, so a re-minted token needs no restart.
 
   uv run python -m unittest discover -s tests -v
 """
@@ -8,25 +8,26 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from gws_mcp import server
+from gws_mcp import auth, server
 
 
 class ServicesFollowTheToken(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
         self.token = Path(self.dir.name, "token.json")
+        self.ident = auth.Identity("t", Path(self.dir.name, "secret.json"), self.token, tuple(auth.ALL_SCOPES))
         self.built = []
         patches = [
-            mock.patch.object(server.auth, "TOKEN_FILE", self.token),
-            mock.patch.object(server.auth, "load_credentials", lambda: self.token.read_text()),
+            mock.patch.object(server.auth, "load_credentials", lambda ident: ident.token_file.read_text()),
             mock.patch.object(server, "build", lambda name, ver, credentials, cache_discovery: self.built.append(credentials) or credentials),
         ]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
         server._services.clear()
-        server._services_token = None
-        self.addCleanup(self.dir.cleanup)
+        reset = server._current.set(self.ident)
+        self.addCleanup(server._current.reset, reset)
 
     def test_reused_while_the_token_is_unchanged(self):
         self.token.write_text("one")
@@ -49,6 +50,20 @@ class ServicesFollowTheToken(unittest.TestCase):
                 server._svc("gmail", "v1")
         self.token.write_text("fresh")
         self.assertEqual(server._svc("gmail", "v1"), "fresh")
+
+    def test_each_identity_keeps_its_own_clients(self):
+        self.token.write_text("mine")
+        other_token = Path(self.dir.name, "other.json")
+        other_token.write_text("theirs")
+        other = auth.Identity("o", self.ident.client_secret, other_token, self.ident.scopes)
+        self.assertEqual(server._svc("drive", "v3"), "mine")
+        reset = server._current.set(other)
+        try:
+            self.assertEqual(server._svc("drive", "v3"), "theirs")
+        finally:
+            server._current.reset(reset)
+        self.assertEqual(server._svc("drive", "v3"), "mine")
+        self.assertEqual(self.built, ["mine", "theirs"])
 
 
 if __name__ == "__main__":

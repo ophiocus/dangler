@@ -1,10 +1,14 @@
 # gws-mcp
 
 Self-owned MCP server giving Claude Code **full read/write on Google Docs and
-Google Sheets**, **read-only Google Drive** (search, metadata, export) and
+Google Sheets**, **Google Drive** (search, metadata, export, shared drives; folders,
+uploads with conversion, moves and renames for an account granted Drive write),
+**Google Slides** (create, outline, batchUpdate) and
 **Gmail drafts** (create, replace, read back, delete, and send a checked draft on your word) — so files
 are edited **in place** (same id, same URL, revision history intact) instead of
 recreated to iterate, and drafts carry exactly the links they were given.
+One process serves **several Google accounts**: every tool takes an optional
+`account` naming the identity to act as (see "Several accounts").
 
 Supersedes the claude.ai Google Drive connector for anything that isn't pure
 reading (that connector's `update_file` is metadata-only and it has no Docs
@@ -18,14 +22,17 @@ stored as raw RFC 822, so nothing rewrites it.
 
 ## Trust model — no third-party server code
 
-- **Our code:** `src/gws_mcp/` (~400 lines: `auth.py`, `server.py`).
+- **Our code:** `src/gws_mcp/` (`auth.py`, `server.py`, `gmail.py`).
 - **Dependencies (5, all vendor-official):** Anthropic's `mcp` SDK; Google's
   `google-api-python-client`, `google-auth`, `google-auth-oauthlib`,
   `google-auth-httplib2`. Nothing else runs with your token.
 - **Identity:** your own OAuth *Desktop* client from your own GCP project.
   Consent is granted to *you*, not to any vendor.
-- **Scopes (minimum for the job, no Drive write):**
-  `documents`, `spreadsheets`, `drive.readonly`, `gmail.compose`, `gmail.readonly`.
+- **Scopes (minimum for the job, set per identity).** The default identity asks for
+  `documents`, `spreadsheets`, `drive.readonly`, `gmail.compose`, `gmail.readonly` —
+  no Drive write. `drive` (or `drive.file`) and `presentations` are granted only to an
+  identity whose `scopes` name them; the Drive write and Slides tools refuse, before
+  calling Google, for an identity without them.
   - `gmail.compose` creates, replaces, reads, deletes and sends drafts. The
     server sends only an existing draft (`gmail_draft_send`), never a message
     composed in the same call, so what goes out is what was checked.
@@ -49,14 +56,16 @@ personal account, so:
 
 1. https://console.cloud.google.com/projectcreate → project (e.g. `carlos-mcp`).
 2. Enable **Google Docs API**, **Google Sheets API**, **Google Drive API**,
-   **Gmail API**
-   (`…/apis/library/{docs,sheets,drive,gmail}.googleapis.com?project=<id>`).
-   A disabled Gmail API shows up as `Google API error 403: Gmail API has not
-   been used in project …`, and `gws-mcp doctor` fails on its mailbox check.
+   **Gmail API**, **Google Slides API**
+   (`…/apis/library/{docs,sheets,drive,gmail,slides}.googleapis.com?project=<id>`).
+   A disabled API shows up as `Google API error 403: <API> has not
+   been used in project …` (`gws-mcp doctor` fails on its mailbox check for Gmail;
+   the Slides tools answer it on their first call).
 3. https://console.cloud.google.com/auth/overview → *Get started*: External,
    your email as support/contact, tick the User Data Policy box, Create.
-4. `…/auth/audience` → *Test users* → add your email.
-   Then **Publish app** (else the refresh token dies every 7 days).
+4. `…/auth/audience` → *Test users* → add each account that will sign in.
+   While the app is in Testing the refresh token dies every 7 days, and
+   `gws-mcp auth` renews it.
 5. `…/auth/clients/create` → **Desktop app** → Create → **Download JSON**
    (only chance) → save as `~/.gcp/client_secret.json`.
 
@@ -118,7 +127,7 @@ directly — the point of the fleet is that one registration fronts everything:
 [servers.google]
 command = "uv"
 args = ["run", "--directory", "<repo>/extensions/google", "gws-mcp"]
-identity = "your Google account — Docs + Sheets read/write, Drive read-only, Gmail drafts + send a draft"
+identity = "your Google account (plus any in ~/.gcp/gws-accounts.toml, per call) — Docs, Sheets, Slides, Drive, Gmail drafts + send a draft"
 setup_hint = "OAuth desktop client at ~/.gcp/client_secret.json, then `uv run --directory <repo>/extensions/google gws-mcp auth`"
 ```
 
@@ -126,21 +135,54 @@ setup_hint = "OAuth desktop client at ~/.gcp/client_secret.json, then `uv run --
 standalone instead, the direct registration still works:
 `claude mcp add --scope user gws-mcp -- uv run --directory <repo>/extensions/google gws-mcp`.
 
-Env overrides: `GWS_MCP_DIR` (default `~/.gcp`), `GWS_MCP_CLIENT_SECRET`,
-`GWS_MCP_TOKEN`.
+### The env identity
 
-### A second identity (a shared mailbox, another account)
-
-One process is one identity. Another account is another fleet entry running the
-same code with its own env — nothing else changes:
+A process's own identity, `default`, comes from its env:
 
 | Env | Meaning |
 |---|---|
-| `GWS_MCP_CLIENT_SECRET` | that identity's OAuth client JSON (path, never read by the agent) |
-| `GWS_MCP_TOKEN` | that identity's token file |
-| `GWS_MCP_SCOPES` | short scope names, comma-separated, e.g. `gmail.compose,gmail.readonly` (default: all five) |
+| `GWS_MCP_DIR` | where the defaults below live (default `~/.gcp`) |
+| `GWS_MCP_CLIENT_SECRET` | the OAuth client JSON (path, never read by the agent) |
+| `GWS_MCP_TOKEN` | the token file |
+| `GWS_MCP_SCOPES` | short scope names, comma-separated, e.g. `gmail.compose,gmail.readonly` (default: the five above) |
 | `GWS_MCP_DEFAULT_FROM` | From for every draft that names no `sender`, e.g. `Oído en Vivo <info@oidoenvivo.com>` |
 | `GWS_MCP_LOGIN_HINT` | account the consent screen opens on, so `auth` lands in the right Google account |
+| `GWS_MCP_ACCOUNTS` | the accounts file (default `~/.gcp/gws-accounts.toml`) |
+
+### Several accounts
+
+**One process, many identities.** The accounts file names identities beyond the
+env one. Each has its own token, scope set, default From and login hint, and a
+tool call picks one with `account: "<name>"`; without `account` the call runs as
+`default`. No fleet entry is added per account. The file holds paths, never a
+token, and lives outside the repository (it names real accounts). The server
+re-reads it whenever it changes, so a new account is served on the next call.
+
+```toml
+# ~/.gcp/gws-accounts.toml
+[accounts.shared]
+token = "~/.gcp/shared/gws-token.json"            # required; written by `gws-mcp auth --account shared`
+scopes = ["drive", "documents", "spreadsheets", "presentations"]   # default: the five default scopes
+default_from = "Ejemplo <hola@example.org>"       # optional
+login_hint = "mailbox@example.com"                 # optional: the account's address, for the consent screen
+# client_secret = "~/.gcp/other/client_secret.json"  # optional: default is the env identity's
+```
+
+To add one:
+
+1. **Entry.** Add its `[accounts.<name>]` table to the accounts file
+   (`default` is reserved for the env identity).
+2. **Token.** `uv run --directory <repo>/extensions/google gws-mcp auth --account <name> --no-browser`
+   prints the consent URL; open it in the browser profile signed in as that
+   account and approve. The token lands at the entry's `token`.
+3. **Check.** `gws-mcp doctor --account <name>` (client, token, scopes, the
+   address, APIs), or the `accounts` tool, which lists every identity with its
+   scopes and whether its token exists. Then call any tool with `account`.
+
+**A fleet entry of its own** is still the way when an account needs its own
+name tag: a skill that says when to reach for it and what rules bind it (the
+oidoenvivo mailbox, whose sends only one session makes). Such an entry runs the
+same code with its own env, which becomes that process's `default`:
 
 ```toml
 [servers.oidoenvivo-mail]
@@ -157,9 +199,10 @@ GWS_MCP_LOGIN_HINT = "mailbox@example.com"   # the identity's Google account
 ```
 
 Auth for it runs with the same env: set those variables, then `gws-mcp auth`.
-With a Gmail-only scope set, `whoami` reads the Gmail profile instead of Drive.
+`whoami` reads the address from Drive when the token holds any Drive scope,
+else from the Gmail profile.
 
-Steps to add an identity, none of which restarts dangler or the client:
+Steps to add such an entry, none of which restarts dangler or the client:
 
 1. **Skill.** Write `identities/<entry>/SKILL.md` (frontmatter `name` and a
    `description` that says when to reach for this account rather than `google`).
@@ -178,7 +221,8 @@ Steps to add an identity, none of which restarts dangler or the client:
 **Re-consent needs no restart either.** The server rebuilds its Google clients
 whenever its token file changes, so after `gws-mcp auth` (a new scope, or the
 weekly re-auth of an app in Testing) the next call uses the new token. Never
-swap token files under a running entry to change accounts: that is a second entry.
+swap token files under a running entry to change accounts: that is another
+identity, in the accounts file or as an entry of its own.
 
 **From addresses.** `gmail_draft_create` / `gmail_draft_update` take `sender`.
 It must be the mailbox's own address or a *verified* send-as of it (read with
@@ -189,19 +233,32 @@ needs no verification mail).
 
 ## Tools
 
-| Docs | Sheets | Drive (read-only) |
+Every tool takes an optional `account` (see "Several accounts"); `accounts`
+lists the identities.
+
+| Docs | Sheets | Drive (read) |
 |---|---|---|
-| `docs_get` plain text | `sheets_info` tabs/dims | `drive_search` |
+| `docs_get` plain text | `sheets_info` tabs/dims | `drive_search` (shared drives included; `drive_id` limits to one) |
 | `docs_outline` paragraphs + indexes | `sheets_read` range → rows | `drive_get` metadata |
 | `docs_replace` find/replace all | `sheets_write` overwrite range | `drive_export` doc/sheet → pdf/docx/xlsx/csv/… |
-| `docs_insert` at index / end | `sheets_append` rows | |
+| `docs_insert` at index / end | `sheets_append` rows | `drive_shared_drives` |
 | `docs_delete_range` | `sheets_clear` | |
 | `docs_create` | `sheets_find` text → cells | |
 | `docs_batch_update` raw API | `sheets_add_sheet`, `sheets_create` | |
 | | `sheets_batch_update` raw API | |
 
-Agent rule: read with `docs_outline`/`sheets_read` first, then edit by index or
-A1 range. Escape hatches (`*_batch_update`) take raw Google API request lists.
+| Drive write (`drive` or `drive.file`) | Slides (`presentations`, or a Drive write scope) |
+|---|---|
+| `drive_create_folder` in My Drive, a folder or a shared drive | `slides_create` |
+| `drive_upload` a local file; `convert_to` doc / sheet / slides turns .docx/.md/.html, .xlsx/.csv, .pptx into Google files | `slides_get` outline: slide and element objectIds, text |
+| `drive_move` into a folder or shared drive (out of every current parent) | `slides_batch_update` raw API |
+| `drive_rename` in place | |
+
+Every Drive call passes `supportsAllDrives`, so shared-drive ids work wherever a
+file or folder id does. There is no delete or share tool.
+
+Agent rule: read with `docs_outline`/`sheets_read`/`slides_get` first, then edit by index,
+A1 range or objectId. Escape hatches (`*_batch_update`) take raw Google API request lists.
 
 ### Gmail drafts
 
@@ -244,21 +301,27 @@ uv run python tests/smoke.py --write             # live: throwaway Doc + Sheet (
 ## CLI
 
 ```
-gws-mcp            # serve (stdio)
-gws-mcp auth       # consent → ~/.gcp/gws-mcp-token.json
+gws-mcp                         # serve (stdio)
+gws-mcp auth [--no-browser]     # consent → the identity's token file; --no-browser prints the URL instead of opening one
 gws-mcp whoami
 gws-mcp doctor
 gws-mcp revoke
+gws-mcp accounts                # every identity: name, scopes, default From, token present
 ```
+
+`auth`, `whoami`, `doctor` and `revoke` take `--account <name>` for an identity
+from the accounts file; without it they act on the env identity.
 
 ## Layout
 
 ```
 pyproject.toml
 src/gws_mcp/__init__.py
-src/gws_mcp/auth.py      scopes, token load/refresh, interactive auth, revoke
-src/gws_mcp/server.py    FastMCP tools + CLI
+src/gws_mcp/auth.py      identities (env + accounts file), scopes, token load/refresh, interactive auth, revoke
+src/gws_mcp/server.py    FastMCP tools (each takes `account`) + CLI
 src/gws_mcp/gmail.py     draft MIME building and reading (pure, no network)
 tests/test_gmail.py      offline MIME tests
+tests/test_services.py   offline: clients follow each identity's token file
+tests/test_accounts.py   offline: accounts file, `account` on every tool, scope guards, upload conversion
 tests/smoke.py           live stdio smoke test
 ```
