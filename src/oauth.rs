@@ -25,6 +25,10 @@ use serde::{Deserialize, Serialize};
 /// provider as the redirect URI, so it has to be stable across runs.
 const CALLBACK_PORT: u16 = 8899;
 
+/// The client name sent to dynamic registration. Kaggle echoes it back as the client id and its authorize endpoint
+/// refuses an id under 8 characters ("ClientId too small: dangler", 2026-11-09), so it is not the bare crate name.
+const CLIENT_NAME: &str = "dangler-mcp";
+
 /// What we persist between runs: the dynamically-registered client id and the
 /// token response (access + refresh). Never logged, never echoed.
 #[derive(Debug, Serialize, Deserialize)]
@@ -127,7 +131,7 @@ pub async fn authorize(server: &str, url: &str, scopes: &[&str]) -> Result<()> {
         .await
         .map_err(|e| anyhow!("OAuth discovery for '{server}': {e}"))?;
     state
-        .start_authorization(scopes, &redirect, Some("dangler"))
+        .start_authorization(scopes, &redirect, Some(CLIENT_NAME))
         .await
         .map_err(|e| anyhow!("registering dangler with '{server}': {e}"))?;
 
